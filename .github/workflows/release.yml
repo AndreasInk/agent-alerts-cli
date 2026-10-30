@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test
+        run: swift test
+      - name: Executable smoke test
+        run: scripts/smoke-test.sh .build/debug/agentalerts
+      - name: Release tooling tests
+        run: python3 scripts/test_release.py
+      - name: Build release
+        run: swift build -c release --product agentalerts
+      - name: Validate and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          test "$(.build/release/agentalerts --version)" = "${RELEASE_TAG#v}"
+          test "$(lipo -archs .build/release/agentalerts)" = "$RELEASE_ARCH"
+          package_dir="$(mktemp -d)"
+          trap 'rm -rf "$package_dir"' EXIT
+          install -m 755 .build/release/agentalerts "$package_dir/agentalerts"
+          cp README.md LICENSE "$package_dir/"
+          codesign --force --sign - --timestamp=none --identifier ink.andreas.agentalerts "$package_dir/agentalerts"
+          codesign --verify --strict "$package_dir/agentalerts"
+          mkdir -p dist
+          COPYFILE_DISABLE=1 tar -czf "dist/agentalerts-$RELEASE_TAG-macos-$RELEASE_ARCH.tar.gz" -C "$package_dir" agentalerts README.md LICENSE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: macos-15
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Generate formula and checksums
+        run: |
+          python3 scripts/release.py --version "${RELEASE_TAG#v}" --repository "$RELEASE_REPOSITORY" --artifacts dist --output dist/agentalerts.rb
+          cd dist
+          shasum -a 256 *.tar.gz agentalerts.rb > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$RELEASE_TAG" dist/* --repo "$RELEASE_REPOSITORY" --verify-tag --generate-notes

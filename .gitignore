@@ -1,0 +1,18 @@
+.build/
+.swiftpm/
+.DS_Store
+dist/
+.env
+.env.*
+token.env
+*.xcuserstate
+xcuserdata/
+__pycache__/
+
+# Private keys, certificates, and provisioning files
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.mobileprovision

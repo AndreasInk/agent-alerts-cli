@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Show toolchain
+        run: swift --version
+      - name: Test
+        run: swift test
+      - name: Executable smoke test
+        run: scripts/smoke-test.sh .build/debug/agentalerts
+      - name: Release tooling tests
+        run: python3 scripts/test_release.py
