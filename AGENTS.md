@@ -19,3 +19,6 @@ Keep that surface small. Scheduling and account management belong elsewhere.
 - Keep `--version` and release tags aligned. Release tools must use checksums from real artifacts; never invent a release URL or checksum.
 
 Release preparation and manual acceptance checks live in [docs/releasing.md](docs/releasing.md).
+
+- Passive Codex `PermissionRequest` events must stay silent: they run before auto-review routing and do not establish user attention. Explicit phone approval mode uses its separate coordinator.
+- Passive Claude approval alerts use only `Notification` with `notification_type: "permission_prompt"`; early `PermissionRequest` hooks may be answered automatically and must stay silent.
