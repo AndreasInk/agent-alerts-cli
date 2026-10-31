@@ -43,6 +43,8 @@ agentalerts hooks install
 
 This detects Codex and Claude and adds automatic status updates. In Codex, open `/hooks` to review and trust them. Restart an existing agent session to load the changes.
 
+Passive Codex approval alerts are suppressed because its permission hook also fires for automatic review. Codex approval prompts remain in the native UI. Claude approval alerts use its delayed `permission_prompt` notification, so requests resolved before that notification stay silent. Explicit phone approval mode is separate.
+
 Notifications are snoozed while you use your Mac. After five minutes away, they resume. Quiet Live Activity updates continue while you work.
 
 To receive notifications even while active:

@@ -141,7 +141,11 @@ public struct HookHandler: Sendable {
         case "UserPromptSubmit": return isPlanning ? .planning : .working
         case "Stop": return isPlanning ? .planUpdate : .completion
         case "PermissionRequest":
-            return agent == .claude && event["tool_name"] as? String == "ExitPlanMode" ? nil : .approval
+            // This precedes the final approval outcome. Another hook may allow
+            // the action without user input. Claude's delayed permission_prompt
+            // notification is the passive attention signal; Codex has no equivalent.
+            // Explicit phone approvals use ApprovalCoordinator instead.
+            return nil
         case "StopFailure" where agent == .claude: return .failure
         case "PreToolUse" where agent == .claude:
             switch event["tool_name"] as? String {
