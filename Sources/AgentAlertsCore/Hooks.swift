@@ -27,7 +27,6 @@ public struct HookInstallationStatus: Sendable {
     public let agent: HookAgent
     public let present: Bool
     public let installed: Bool
-    public let idleSeconds: Int?
     public let configPath: String
     public let changed: Bool
     public let approvals: HookApprovalMode
@@ -51,8 +50,7 @@ public struct HookInstaller {
         self.executable = executable
     }
 
-    public func install(target: HookTarget = .all, idleSeconds: Int = 300, approvals: HookApprovalMode = .local) throws -> [HookInstallationStatus] {
-        guard idleSeconds >= 0 else { throw HookError("Idle seconds must be a non-negative integer.") }
+    public func install(target: HookTarget = .all, approvals: HookApprovalMode = .local) throws -> [HookInstallationStatus] {
         guard executable.hasPrefix("/"), !executable.contains("\n"), !executable.contains("\r") else {
             throw HookError("The hook executable must be an absolute path without newlines.")
         }
@@ -74,7 +72,7 @@ public struct HookInstaller {
                 var groups = hooks[definition.event] as? [[String: Any]] ?? []
                 var group: [String: Any] = ["hooks": [[
                     "type": "command",
-                    "command": command(for: agent, idleSeconds: idleSeconds, approvals: waitsForReply ? .phone : .local),
+                    "command": command(for: agent, approvals: waitsForReply ? .phone : .local),
                     "timeout": waitsForReply ? 86_415 : 8,
                 ]]]
                 if let matcher = definition.matcher { group["matcher"] = matcher }
@@ -147,23 +145,21 @@ public struct HookInstaller {
         ]
     }
 
-    private func command(for agent: HookAgent, idleSeconds: Int, approvals: HookApprovalMode) -> String {
+    private func command(for agent: HookAgent, approvals: HookApprovalMode) -> String {
         let quoted = "'" + executable.replacingOccurrences(of: "'", with: "'\\''") + "'"
         // The fallback makes a removed executable harmless to the parent agent.
         let approvalFlag = approvals == .phone ? " --approvals phone" : ""
-        return "\(quoted) _hook \(agent.rawValue) --idle-seconds \(idleSeconds)\(approvalFlag) || printf '{}\\n' # agent-alerts-managed-v1"
+        return "\(quoted) _hook \(agent.rawValue)\(approvalFlag) || printf '{}\\n' # agent-alerts-managed-v1"
     }
 
-    private func managedOptions(_ handler: [String: Any], agent: HookAgent) -> (idle: Int, approvals: HookApprovalMode)? {
+    private func managedOptions(_ handler: [String: Any], agent: HookAgent) -> HookApprovalMode? {
         guard handler["type"] as? String == "command", let command = handler["command"] as? String else { return nil }
         // Match the complete generated invocation, not a substring in someone else's hook.
         let pattern = "^'(?:[^']|'\\\\'')+' _hook " + agent.rawValue
-            + " --idle-seconds ([0-9]+)( --approvals phone)? \\|\\| printf '\\{\\}\\\\n' # agent-alerts-managed-v1$"
+            + "(?: --idle-seconds ([0-9]+))?( --approvals phone)? \\|\\| printf '\\{\\}\\\\n' # agent-alerts-managed-v1$"
         guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)),
-              let range = Range(match.range(at: 1), in: command) else { return nil }
-        guard let idle = Int(command[range]) else { return nil }
-        return (idle, match.range(at: 2).location == NSNotFound ? .local : .phone)
+              let match = regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) else { return nil }
+        return match.range(at: 2).location == NSNotFound ? .local : .phone
     }
 
     private func removingManagedHooks(from root: [String: Any], agent: HookAgent) -> [String: Any] {
@@ -196,28 +192,25 @@ public struct HookInstaller {
         _ agent: HookAgent, present: Bool, root: [String: Any], path: URL, changed: Bool
     ) -> HookInstallationStatus {
         let hooks = root["hooks"] as? [String: Any] ?? [:]
-        var values: [Int] = []
         var matched = 0
         var approvals: HookApprovalMode = .local
         for definition in definitions(for: agent) {
             let groups = hooks[definition.event] as? [[String: Any]] ?? []
-            var eventValues: [Int] = []
+            var eventMatches = 0
             for group in groups where group["matcher"] as? String == definition.matcher {
                 for handler in group["hooks"] as? [[String: Any]] ?? [] {
                     if let options = managedOptions(handler, agent: agent) {
-                        eventValues.append(options.idle)
-                        if definition.event == "PermissionRequest" { approvals = options.approvals }
+                        eventMatches += 1
+                        if definition.event == "PermissionRequest" { approvals = options }
                     }
                 }
             }
-            if eventValues.count == 1 { matched += 1 }
-            values += eventValues
+            if eventMatches == 1 { matched += 1 }
         }
-        let consistent = Set(values).count == 1
         return HookInstallationStatus(
             agent: agent, present: present,
-            installed: matched == definitions(for: agent).count && consistent,
-            idleSeconds: consistent ? values.first : nil, configPath: path.path, changed: changed, approvals: approvals
+            installed: matched == definitions(for: agent).count,
+            configPath: path.path, changed: changed, approvals: approvals
         )
     }
 

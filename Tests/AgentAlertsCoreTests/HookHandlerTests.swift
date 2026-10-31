@@ -50,13 +50,12 @@ struct HookHandlerTests {
 
     private func handler(
         _ root: URL,
-        idle: @escaping @Sendable () throws -> TimeInterval = { 600 },
         time: TimeInterval = 1000,
         warning: @escaping @Sendable (String) -> Void = { _ in }
     ) -> HookHandler {
         HookHandler(
             environment: ["XDG_CACHE_HOME": root.path], home: root,
-            idle: idle, now: { Date(timeIntervalSince1970: time) }, warning: warning
+            now: { Date(timeIntervalSince1970: time) }, warning: warning
         )
     }
 
@@ -64,7 +63,7 @@ struct HookHandlerTests {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
-        try await handler(root).handle(agent: .codex, input: input(), idleSeconds: 300) { request in
+        try await handler(root).handle(agent: .codex, input: input()) { request in
             await recorder.record(request)
         }
         let sent = await recorder.requests
@@ -85,12 +84,11 @@ struct HookHandlerTests {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
-        // Even an idle Mac and distinct request IDs cannot establish user attention.
+        // Distinct request IDs cannot establish user attention.
         for request in ["auto-review-one", "auto-review-two", "user-or-auto-unknown"] {
-            try await handler(root, idle: { 3600 }).handle(
+            try await handler(root).handle(
                 agent: .codex,
-                input: input("PermissionRequest", extras: ["request_id": request]),
-                idleSeconds: 0
+                input: input("PermissionRequest", extras: ["request_id": request])
             ) { await recorder.record($0) }
         }
         #expect(await recorder.requests.isEmpty)
@@ -104,58 +102,26 @@ struct HookHandlerTests {
         for mode in ["default", "auto", "bypassPermissions", "acceptEdits", "plan"] {
             try await handler(root).handle(
                 agent: .claude,
-                input: input("PermissionRequest", extras: ["permission_mode": mode]),
-                idleSeconds: 0
+                input: input("PermissionRequest", extras: ["permission_mode": mode])
             ) { await recorder.record($0) }
         }
         #expect(await recorder.requests.isEmpty)
         // A real prompt without source request IDs still produces exactly one alert.
         try await handler(root).handle(
             agent: .claude,
-            input: input("Notification", extras: ["notification_type": "permission_prompt"]),
-            idleSeconds: 0
+            input: input("Notification", extras: ["notification_type": "permission_prompt"])
         ) { await recorder.record($0) }
         #expect(await recorder.requests.count == 1)
     }
 
-    @Test func activeUseSkipsAlertAndCreatesNoCache() async throws {
+    @Test func completionAndAttentionSendWithoutComputerActivityChecks() async throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
-        try await handler(root, idle: { 299.99 }).handle(agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt"]), idleSeconds: 300) { request in
-            await recorder.record(request)
+        for event in [try input("Stop"), try input("Notification", extras: ["notification_type": "permission_prompt"])] {
+            try await handler(root).handle(agent: .claude, input: event) { await recorder.record($0) }
         }
-        let sent = await recorder.requests
-        #expect(sent.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("agent-alerts").path))
-    }
-
-    @Test func idleBoundarySendsAndZeroNeverQueriesIdle() async throws {
-        let root = try fixture()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let recorder = HookRecorder()
-        try await handler(root, idle: { 300 }).handle(agent: .codex, input: input(), idleSeconds: 300) { await recorder.record($0) }
-        try await handler(root, idle: { throw AppError("Idle must not be queried") }).handle(
-            agent: .codex, input: input(), idleSeconds: 0
-        ) { await recorder.record($0) }
-        let sent = await recorder.requests
-        #expect(sent.count == 2)
-    }
-
-    @Test func invalidIdleSkipsWithError() async throws {
-        let root = try fixture()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let recorder = HookRecorder()
-        for value in [Double.nan, Double.infinity, -1] {
-            do {
-                try await handler(root, idle: { value }).handle(agent: .codex, input: input(), idleSeconds: 300) { await recorder.record($0) }
-                Issue.record("Invalid idle measurement was accepted")
-            } catch {
-                #expect(error.localizedDescription.contains("idle"))
-            }
-        }
-        let sent = await recorder.requests
-        #expect(sent.isEmpty)
+        #expect(await recorder.requests.count == 2)
     }
 
     @Test func recursiveAndUnrelatedHooksDoNotSend() async throws {
@@ -169,7 +135,7 @@ struct HookHandlerTests {
             try input("PreToolUse", extras: ["tool_name": "Bash"]),
             try input("Notification", extras: ["notification_type": "idle_prompt"]),
         ] {
-            try await handler(root).handle(agent: .claude, input: data, idleSeconds: 0) { await recorder.record($0) }
+            try await handler(root).handle(agent: .claude, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
         #expect(sent.isEmpty)
@@ -186,7 +152,7 @@ struct HookHandlerTests {
             try input("Notification", session: "url", extras: ["notification_type": "elicitation_url_dialog"]),
             try input("StopFailure", session: "failure"),
         ].enumerated() {
-            try await handler(root, time: Double(1000 + index)).handle(agent: .claude, input: data, idleSeconds: 0) { await recorder.record($0) }
+            try await handler(root, time: Double(1000 + index)).handle(agent: .claude, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
         #expect(sent.map(\.payload.title) == [
@@ -204,7 +170,7 @@ struct HookHandlerTests {
             try input("Notification", extras: ["notification_type": "permission_prompt"]),
             try input("Notification", extras: ["notification_type": "permission_prompt"]),
         ] {
-            try await handler(root).handle(agent: .claude, input: data, idleSeconds: 0) { await recorder.record($0) }
+            try await handler(root).handle(agent: .claude, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
         #expect(sent.count == 3)
@@ -219,8 +185,7 @@ struct HookHandlerTests {
         for request in ["request-one", "request-two"] {
             try await handler(root).handle(
                 agent: .claude,
-                input: input("Notification", turn: "same-turn", extras: ["notification_type": "permission_prompt", "request_id": request]),
-                idleSeconds: 0
+                input: input("Notification", turn: "same-turn", extras: ["notification_type": "permission_prompt", "request_id": request])
             ) { await recorder.record($0) }
         }
         let sent = await recorder.requests
@@ -235,8 +200,7 @@ struct HookHandlerTests {
         for _ in 0..<2 {
             try await handler(root).handle(
                 agent: .claude,
-                input: input("Notification", extras: ["tool_use_id": "same-request", "notification_type": "permission_prompt"]),
-                idleSeconds: 0
+                input: input("Notification", extras: ["tool_use_id": "same-request", "notification_type": "permission_prompt"])
             ) { await recorder.record($0) }
         }
         let sent = await recorder.requests
@@ -253,7 +217,7 @@ struct HookHandlerTests {
         let recorder = HookRecorder()
         let warnings = HookWarnings()
         try await handler(root, warning: { warnings.record($0) }).handle(
-            agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "request-one"]), idleSeconds: 0
+            agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "request-one"])
         ) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.count == 1)
@@ -274,7 +238,7 @@ struct HookHandlerTests {
         let recorder = HookRecorder()
         let warnings = HookWarnings()
         try await handler(root, warning: { warnings.record($0) }).handle(
-            agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "request-one"]), idleSeconds: 0
+            agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "request-one"])
         ) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.count == 1)
@@ -289,7 +253,7 @@ struct HookHandlerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
         for data in [try input("Notification", turn: "one", extras: ["notification_type": "permission_prompt"]), try input("Notification", turn: "two", extras: ["notification_type": "permission_prompt"]), try input("Notification", session: "two", extras: ["notification_type": "permission_prompt"])] {
-            try await handler(root).handle(agent: .claude, input: data, idleSeconds: 0) { await recorder.record($0) }
+            try await handler(root).handle(agent: .claude, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
         #expect(sent.count == 3)
@@ -303,7 +267,7 @@ struct HookHandlerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
         for _ in 0..<2 {
-            try await handler(root).handle(agent: .claude, input: input(), idleSeconds: 0) { await recorder.record($0) }
+            try await handler(root).handle(agent: .claude, input: input()) { await recorder.record($0) }
         }
         let sent = await recorder.requests
         #expect(sent.count == 2)
@@ -316,10 +280,10 @@ struct HookHandlerTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
         do {
-            try await handler(root).handle(agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "failed-request"]), idleSeconds: 0) { _ in throw AppError("Network unavailable") }
+            try await handler(root).handle(agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "failed-request"])) { _ in throw AppError("Network unavailable") }
             Issue.record("The send failure should be returned")
         } catch { #expect(error.localizedDescription == "Network unavailable") }
-        try await handler(root).handle(agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "failed-request"]), idleSeconds: 0) { await recorder.record($0) }
+        try await handler(root).handle(agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "failed-request"])) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.count == 1)
     }
@@ -330,7 +294,7 @@ struct HookHandlerTests {
         let recorder = HookRecorder()
         for data in [Data("{".utf8), Data("[]".utf8), Data(repeating: 32, count: 1_048_577), Data("{\"hook_event_name\":\"Stop\"}".utf8)] {
             do {
-                try await handler(root).handle(agent: .codex, input: data, idleSeconds: 0) { await recorder.record($0) }
+                try await handler(root).handle(agent: .codex, input: data) { await recorder.record($0) }
                 Issue.record("Invalid hook input should be rejected")
             } catch { }
         }
@@ -341,7 +305,7 @@ struct HookHandlerTests {
     @Test func cacheDoesNotPersistPrivateMetadata() async throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
-        try await handler(root).handle(agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "private-request-id"]), idleSeconds: 0) { _ in }
+        try await handler(root).handle(agent: .claude, input: input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "private-request-id"])) { _ in }
         let text = try String(contentsOf: root.appendingPathComponent("agent-alerts/events.json"), encoding: .utf8)
         #expect(!text.contains("session-1"))
         #expect(!text.contains("Important Project"))
@@ -356,7 +320,7 @@ struct HookHandlerTests {
             let recorder = HookRecorder()
             for mode in ["plan", "default", "acceptEdits", "unknown"] {
                 try await handler(root).handle(
-                    agent: agent, input: input("UserPromptSubmit", extras: ["permission_mode": mode]), idleSeconds: 0
+                    agent: agent, input: input("UserPromptSubmit", extras: ["permission_mode": mode])
                 ) { await recorder.record($0) }
             }
             let sent = await recorder.requests
@@ -375,7 +339,7 @@ struct HookHandlerTests {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
-        try await handler(root).handle(agent: .codex, input: input("UserPromptSubmit"), idleSeconds: 0) { await recorder.record($0) }
+        try await handler(root).handle(agent: .codex, input: input("UserPromptSubmit")) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.first?.payload.title == "Codex working")
         #expect(sent.first?.notification == nil)
@@ -387,7 +351,7 @@ struct HookHandlerTests {
         let recorder = HookRecorder()
         for agent in HookAgent.allCases {
             try await handler(root).handle(
-                agent: agent, input: input("Stop", extras: ["permission_mode": "plan"]), idleSeconds: 0
+                agent: agent, input: input("Stop", extras: ["permission_mode": "plan"])
             ) { await recorder.record($0) }
         }
         let sent = await recorder.requests
@@ -399,8 +363,8 @@ struct HookHandlerTests {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
-        try await handler(root).handle(agent: .claude, input: input("PreToolUse", extras: ["tool_name": "ExitPlanMode"]), idleSeconds: 0) { await recorder.record($0) }
-        try await handler(root, time: 1001).handle(agent: .claude, input: input("PermissionRequest", extras: ["tool_name": "ExitPlanMode"]), idleSeconds: 0) { await recorder.record($0) }
+        try await handler(root).handle(agent: .claude, input: input("PreToolUse", extras: ["tool_name": "ExitPlanMode"])) { await recorder.record($0) }
+        try await handler(root, time: 1001).handle(agent: .claude, input: input("PermissionRequest", extras: ["tool_name": "ExitPlanMode"])) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.count == 1)
         #expect(sent.first?.payload.title == "Claude plan ready")
@@ -416,14 +380,14 @@ struct HookHandlerTests {
             try input("UserPromptSubmit", extras: ["permission_mode": "default"]),
             try input("Stop", extras: ["permission_mode": "default"]),
         ] {
-            try await handler(root).handle(agent: .codex, input: data, idleSeconds: 0) { await recorder.record($0) }
+            try await handler(root).handle(agent: .codex, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
         #expect(sent.map(\.payload.title) == ["Codex planning", "Codex plan updated", "Codex working", "Codex finished"])
         #expect(Set(sent.map(\.activityID)).count == 1)
     }
 
-    @Test func quietProgressBypassesActiveSnoozing() async throws {
+    @Test func progressPreservesNotificationIntent() async throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
@@ -432,21 +396,21 @@ struct HookHandlerTests {
             try input("Stop", extras: ["permission_mode": "plan"]),
             try input("PreToolUse", extras: ["tool_name": "ExitPlanMode"]),
         ] {
-            try await handler(root, idle: { 1 }).handle(agent: .claude, input: data, idleSeconds: 300) { await recorder.record($0) }
+            try await handler(root).handle(agent: .claude, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
-        #expect(sent.count == 1)
+        #expect(sent.count == 3)
         #expect(sent.first?.payload.title == "Claude planning")
         #expect(sent.first?.notification == nil)
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("agent-alerts").path))
     }
 
-    @Test func quietWorkingDoesNotNeedIdleMeasurement() async throws {
+    @Test func workingDoesNotNotify() async throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = HookRecorder()
-        try await handler(root, idle: { throw AppError("Idle must not be queried") }).handle(
-            agent: .codex, input: input("UserPromptSubmit"), idleSeconds: 300
+        try await handler(root).handle(
+            agent: .codex, input: input("UserPromptSubmit")
         ) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.count == 1)

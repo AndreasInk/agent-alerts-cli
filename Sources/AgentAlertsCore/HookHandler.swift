@@ -4,14 +4,12 @@ import Foundation
 public struct HookHandler: Sendable {
     private let environment: [String: String]
     private let home: URL
-    private let idle: @Sendable () throws -> TimeInterval
     private let now: @Sendable () -> Date
     private let warning: @Sendable (String) -> Void
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        idle: @escaping @Sendable () throws -> TimeInterval = { try Idle.seconds() },
         now: @escaping @Sendable () -> Date = { Date() },
         warning: @escaping @Sendable (String) -> Void = {
             try? FileHandle.standardError.write(contentsOf: Data(("Agent Alerts hook: " + $0 + "\n").utf8))
@@ -19,7 +17,6 @@ public struct HookHandler: Sendable {
     ) {
         self.environment = environment
         self.home = home
-        self.idle = idle
         self.now = now
         self.warning = warning
     }
@@ -27,10 +24,8 @@ public struct HookHandler: Sendable {
     public func handle(
         agent: HookAgent,
         input: Data,
-        idleSeconds: Int,
         send: @Sendable (AlertRequest) async throws -> Void
     ) async throws {
-        guard idleSeconds >= 0 else { throw HookError("Idle seconds must be a non-negative integer.") }
         guard input.count <= 1_048_576,
               let event = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] else {
             throw HookError("Invalid hook JSON; automatic alert skipped.")
@@ -40,13 +35,6 @@ public struct HookHandler: Sendable {
         guard let session = event["session_id"] as? String, !session.isEmpty, session.utf8.count <= 512,
               let cwd = event["cwd"] as? String, cwd.hasPrefix("/"), cwd.utf8.count <= 16_384 else {
             throw HookError("Hook input requires a session ID and working directory; automatic alert skipped.")
-        }
-        if kind.notify && idleSeconds > 0 {
-            let measured = try idle()
-            guard measured.isFinite, measured >= 0 else {
-                throw HookError("Cannot measure keyboard/mouse idle time; automatic alert skipped.")
-            }
-            guard measured >= Double(idleSeconds) else { return }
         }
         let time = now()
         let sessionDigest = StableIdentity.digest(agent.rawValue + "\n" + session)

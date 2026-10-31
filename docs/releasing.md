@@ -5,7 +5,7 @@ Release automation targets `AndreasInk/agent-alerts-cli`. The first binary relea
 ## Prepare a release
 
 1. Update the CLI's `--version`, run `swift test` and `scripts/smoke-test.sh .build/debug/agentalerts`, and commit the reviewed source.
-2. Check actual agent behavior: Planning/Working updates reach the Live Activity while active; notifying hooks respect snoozing. Verify mode labels, completion/attention events, Codex trust review, and preserved unrelated hooks after uninstall. Repeated explicit request IDs should deduplicate; distinct or unidentified requests must each deliver, and corrupt caches must recover. Confirm actual iPhone rendering separately from API acceptance. Explicit milestones must reuse the requested activity ID without invented completion percentages.
+2. Check actual agent behavior: Planning/Working updates reach the Live Activity while active; notifying hooks send regardless of Mac activity. Verify mode labels, completion/attention events, Codex trust review, and preserved unrelated hooks after uninstall. Repeated explicit request IDs should deduplicate; distinct or unidentified requests must each deliver, and corrupt caches must recover. Confirm actual iPhone rendering separately from API acceptance. Explicit milestones must reuse the requested activity ID without invented completion percentages.
 3. Create a `vVERSION` tag matching `--version`, then push it when release publication is authorized.
 
 Before enabling `--approvals phone`, deploy the webhook's `interaction_status`

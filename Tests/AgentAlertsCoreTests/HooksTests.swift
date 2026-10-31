@@ -48,13 +48,30 @@ struct HooksTests {
         #expect(first.count == 1)
         #expect(first[0].installed)
         #expect(first[0].changed)
-        #expect(first[0].idleSeconds == 300)
         let file = root.appendingPathComponent(".codex/hooks.json")
         let before = try Data(contentsOf: file)
         let second = try installer(root).install(target: .codex)
         #expect(!second[0].changed)
         #expect(try Data(contentsOf: file) == before)
         #expect((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    }
+
+    @Test func legacyIdleHooksMigrateAndUninstallWithoutTouchingOtherHooks() throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try installer(root).install(target: .codex)
+        let file = root.appendingPathComponent(".codex/hooks.json")
+        let current = try String(contentsOf: file, encoding: .utf8)
+        let legacy = current.replacingOccurrences(of: "_hook codex", with: "_hook codex --idle-seconds 300")
+        try Data(legacy.utf8).write(to: file)
+        #expect(try installer(root).status().first?.installed == true)
+        #expect(try installer(root).install(target: .codex)[0].changed)
+        let updated = try String(contentsOf: file, encoding: .utf8)
+        #expect(!updated.contains("--idle-seconds"))
+        #expect(try !installer(root).install(target: .codex)[0].changed)
+        try Data(legacy.utf8).write(to: file)
+        #expect(try installer(root).uninstall(target: .codex)[0].changed)
+        #expect(try !installer(root).status()[0].installed)
     }
 
     @Test func allSkipsAbsentAgents() throws {
@@ -79,9 +96,8 @@ struct HooksTests {
             ],
         ]
         try write(original, to: file)
-        let result = try installer(root).install(target: .claude, idleSeconds: 0)
+        let result = try installer(root).install(target: .claude)
         #expect(result[0].installed)
-        #expect(result[0].idleSeconds == 0)
         let removed = try installer(root).uninstall(target: .claude)
         #expect(removed[0].changed)
         #expect(!removed[0].installed)
@@ -96,10 +112,9 @@ struct HooksTests {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try installer(root).install(target: .codex)
-        let updated = try installer(root, executable: "/Users/test/my tools/agentalerts").install(target: .codex, idleSeconds: 0)
+        let updated = try installer(root, executable: "/Users/test/my tools/agentalerts").install(target: .codex)
         #expect(updated[0].installed)
         #expect(updated[0].changed)
-        #expect(updated[0].idleSeconds == 0)
         let data = try Data(contentsOf: root.appendingPathComponent(".codex/hooks.json"))
         let text = try #require(String(data: data, encoding: .utf8))
         #expect(!text.contains("/opt/homebrew/bin"))
@@ -183,13 +198,6 @@ struct HooksTests {
         _ = try installer(root).uninstall(target: .codex)
         let output = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
         #expect(NSDictionary(dictionary: original).isEqual(to: output))
-    }
-
-    @Test func negativeIdleIsRejectedBeforeWriting() throws {
-        let root = try fixture()
-        defer { try? FileManager.default.removeItem(at: root) }
-        #expect(throws: (any Error).self) { try installer(root).install(target: .codex, idleSeconds: -1) }
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".codex").path))
     }
 
     @Test func installsModeAndExitPlanHooksForBothAgents() throws {

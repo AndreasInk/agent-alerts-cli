@@ -29,9 +29,9 @@ assert url.scheme == "https" and url.netloc == "www.andreas.ink"
 assert url.path == "/agent"
 PY
 
-"$binary" hooks install codex --idle-seconds 0
+"$binary" hooks install codex
 cp "$CODEX_HOME/hooks.json" "$task_temp/original-hooks.json"
-"$binary" hooks install codex --idle-seconds 0
+"$binary" hooks install codex
 cmp "$CODEX_HOME/hooks.json" "$task_temp/original-hooks.json"
 "$binary" hooks status
 python3 - "$binary" "$CODEX_HOME/hooks.json" <<'PY'
@@ -41,6 +41,7 @@ import sys
 
 binary = sys.argv[1]
 config = json.load(open(sys.argv[2]))
+assert "--idle-seconds" not in json.dumps(config)
 command = config["hooks"]["Stop"][0]["hooks"][0]["command"]
 # Execute the actual generated shell command. An incomplete event never sends.
 result = subprocess.run(["/bin/sh", "-c", command], input='{"hook_event_name":"Stop"}', text=True, capture_output=True, timeout=10)
@@ -53,6 +54,17 @@ for arguments, event in [
     result = subprocess.run([binary, *arguments], input=event, text=True, capture_output=True, timeout=10)
     assert result.returncode == 0 and json.loads(result.stdout) == {}
     assert "Agent Alerts hook:" in result.stderr
+# Both new and previously installed invocations remain neutral without sending.
+for agent in ["codex", "claude"]:
+    for legacy in [[], ["--idle-seconds", "300"]]:
+        result = subprocess.run([binary, "_hook", agent, *legacy], input='{"hook_event_name":"PermissionRequest"}', text=True, capture_output=True, timeout=10)
+        assert result.returncode == 0 and json.loads(result.stdout) == {} and not result.stderr
+help_result = subprocess.run([binary, "hooks", "install", "--help"], text=True, capture_output=True)
+assert "--idle-seconds" not in help_result.stdout
+# Legacy install options remain accepted but don't enter generated commands.
+result = subprocess.run([binary, "hooks", "install", "codex", "--idle-seconds", "300"], text=True, capture_output=True)
+assert result.returncode == 0
+assert "--idle-seconds" not in open(sys.argv[2]).read()
 # Misplaced credentials must be rejected before argument-parser diagnostics echo them.
 credential = "rk_agent_" + "A" * 43
 for arguments in [["setup", credential], ["send", "--token", credential], ["send", credential]]:
