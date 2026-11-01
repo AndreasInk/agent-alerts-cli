@@ -12,7 +12,7 @@ Start with the [README](../README.md) for installation and your first alert.
 | `--event start\|update\|end` | `update`, starting an activity if needed |
 | `--json` | Print a machine-readable acknowledgement |
 
-Keep titles to 32 characters and summaries to 96. Start/update also send a notification; ending closes the activity. Manual sends ignore snoozing.
+Keep titles to 32 characters and summaries to 96. Start/update also send a notification; ending closes the activity.
 
 ```bash
 agentalerts send "Deploying" --activity-id deploy --event start
@@ -37,11 +37,11 @@ The Swift and existing TypeScript CLIs share the token file and executable name 
 
 ## Hooks
 
-Choose a specific agent or change the idle threshold:
+Choose a specific agent:
 
 ```bash
 agentalerts hooks install codex
-agentalerts hooks install claude --idle-seconds 60
+agentalerts hooks install claude
 agentalerts hooks uninstall codex
 ```
 
@@ -61,7 +61,9 @@ Changed Codex hook definitions require another `/hooks` trust review.
 | Turn stops outside plan mode | Finished |
 | Approval, question, or failure | Needs approval, needs input, or failed |
 
-Planning/working update only the Live Activity, including while active. Other passive events also notify and respect snoozing. Snoozed notifications are skipped, not queued. If idle time cannot be measured, a notifying hook skips the alert and reports why.
+Planning/working update only the Live Activity. Other supported passive events also notify, regardless of Mac keyboard or mouse activity. Existing hook commands with `--idle-seconds` still work, but the value is ignored. New hooks omit the flag. The legacy install option is accepted but hidden from help.
+
+Claude approval alerts use its delayed `permission_prompt` notification. Early permission requests stay silent for both agents so automatically handled approvals do not notify. Codex lacks an equivalent passive user-attention signal, so manual approval prompts remain in Codex.
 
 Plan labels use the agent's reported mode. A stopped planning turn does not establish that an entire plan or goal is complete. Send goal milestones explicitly; the CLI does not estimate percentages. Passive hooks never read transcripts or send prompts, commands, or replies.
 
@@ -82,7 +84,7 @@ Replies require an interactive connection and Agent Alerts Pro or Founder Pro. T
 
 Phone mode sends the pending tool name and complete command or file target, with common credential forms redacted. Long, multiline, and unsupported actions remain in the agent's native approval flow. Ordinary status updates remain unchanged.
 
-For supported permission requests, the synchronous hook waits up to 24 hours for the matching **Yes** or **No** reply. Yes approves only that request; No denies it. Approval requests bypass snoozing. Expiry, cancellation, unavailable delivery, malformed replies, and network errors never grant permission; approval remains in the native UI. An old reply cannot authorize a later request.
+For supported permission requests, the synchronous hook waits up to 24 hours for the matching **Yes** or **No** reply. Yes approves only that request; No denies it. Expiry, cancellation, unavailable delivery, malformed replies, and network errors never grant permission; approval remains in the native UI. An old reply cannot authorize a later request.
 
 Claude's plan approval, questions, and sandbox-network prompts use different contracts and remain in Claude's native UI. The CLI does not change session permissions or bypass the agent's deny rules.
 

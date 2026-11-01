@@ -32,14 +32,19 @@ enum Main {
     }
 
     private static func runHookArguments(_ arguments: [String]) async throws -> ApprovalDecision? {
-        guard arguments.count == 3 || arguments.count == 5, let agent = HookAgent(rawValue: arguments[0]),
-              arguments[1] == "--idle-seconds", let seconds = Int(arguments[2]), seconds >= 0 else {
+        guard let name = arguments.first, let agent = HookAgent(rawValue: name) else {
             throw AppError("Invalid hook invocation. Reinstall with agentalerts hooks install.")
         }
-        let phoneApprovals = arguments.count == 5
-        if phoneApprovals && (arguments[3] != "--approvals" || arguments[4] != "phone") {
-            throw AppError("Invalid hook invocation. Reinstall with agentalerts hooks install.")
+        var options = Array(arguments.dropFirst())
+        // Accept old installed hooks without retaining their idle-time behavior.
+        if options.first == "--idle-seconds" {
+            guard options.count >= 2, let seconds = Int(options[1]), seconds >= 0 else {
+                throw AppError("Invalid legacy hook invocation.")
+            }
+            options.removeFirst(2)
         }
+        let phoneApprovals = options == ["--approvals", "phone"]
+        guard options.isEmpty || phoneApprovals else { throw AppError("Invalid hook invocation.") }
         let input = try FileHandle.standardInput.read(upToCount: 1_048_577) ?? Data()
         guard input.count <= 1_048_576 else { throw AppError("Hook event is too large; alert skipped.") }
         let client = AgentAlertsClient()
@@ -52,14 +57,14 @@ enum Main {
             )
             if decision == nil {
                 Terminal.error("Agent Alerts hook: Waiting for approval in the agent's native UI.")
-                try await HookHandler().handle(agent: agent, input: input, idleSeconds: 0) { request in
+                try await HookHandler().handle(agent: agent, input: input) { request in
                     let acknowledgement = try await client.send(request, token: token)
                     guard acknowledgement.accepted else { throw AppError(acknowledgement.description) }
                 }
             }
             return decision
         }
-        try await HookHandler().handle(agent: agent, input: input, idleSeconds: seconds) { request in
+        try await HookHandler().handle(agent: agent, input: input) { request in
             let acknowledgement = try await client.send(request, token: TokenStore().read())
             guard acknowledgement.accepted else { throw AppError(acknowledgement.description) }
         }
@@ -170,21 +175,21 @@ struct Hooks: ParsableCommand {
         @Argument(help: "Agent to configure: codex, claude, or all.")
         var target: HookTarget = .all
 
-        @Option(help: "Skip alerts while active. Seconds of idle time required; 0 always sends.")
-        var idleSeconds = 300
+        @Option(help: .hidden)
+        var idleSeconds: Int?
 
         @Option(help: "Handle approvals locally, or wait for a phone reply. Phone mode sends the pending action details.")
         var approvals: HookApprovalMode = .local
 
         func validate() throws {
-            guard idleSeconds >= 0 else { throw ValidationError("--idle-seconds must be a non-negative integer.") }
+            if let idleSeconds, idleSeconds < 0 { throw ValidationError("--idle-seconds must be a non-negative integer.") }
         }
 
         func run() throws {
-            let results = try installer().install(target: target, idleSeconds: idleSeconds, approvals: approvals)
+            let results = try installer().install(target: target, approvals: approvals)
             for result in results {
                 if result.installed {
-                    print("\(result.agent.rawValue): \(result.changed ? "installed" : "already configured") · idle \(result.idleSeconds ?? idleSeconds)s · approvals \(result.approvals.rawValue)")
+                    print("\(result.agent.rawValue): \(result.changed ? "installed" : "already configured") · approvals \(result.approvals.rawValue)")
                 } else {
                     print("\(result.agent.rawValue): not detected; skipped")
                 }
@@ -199,13 +204,12 @@ struct Hooks: ParsableCommand {
     }
 
     struct Status: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Show agent hooks and snoozing settings.")
+        static let configuration = CommandConfiguration(abstract: "Show agent hooks.")
 
         func run() throws {
             for result in try installer().status() {
                 let state = result.installed ? "installed" : (result.present ? "not installed" : "not detected")
-                let idle = result.idleSeconds.map { " · idle \($0)s" } ?? ""
-                print("\(result.agent.rawValue): \(state)\(idle) · approvals \(result.approvals.rawValue)\n  \(result.configPath)")
+                print("\(result.agent.rawValue): \(state) · approvals \(result.approvals.rawValue)\n  \(result.configPath)")
             }
         }
     }
