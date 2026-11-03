@@ -134,7 +134,10 @@ struct Send: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Send a Live Activity and notification.")
 
     @Argument(help: "A short headline, up to 32 characters.")
-    var title: String
+    var title: String?
+
+    @Option(help: "Read Live Activity content, including a custom layout, from a JSON file instead of a headline.")
+    var file: String?
 
     @Option(help: "Additional detail, up to 96 characters. Defaults to the headline.")
     var summary: String?
@@ -142,8 +145,8 @@ struct Send: AsyncParsableCommand {
     @Option(name: .customLong("activity-id"), help: "Reuse an activity ID. Defaults to this working directory.")
     var activityID: String?
 
-    @Option(help: "Alert status: good, warning, or critical.")
-    var status: AlertStatus = .good
+    @Option(help: "Alert status: good, warning, or critical. Defaults to good.")
+    var status: AlertStatus?
 
     @Option(help: "Activity event: start, update, or end. Updates start an activity if needed.")
     var event: AlertEvent = .update
@@ -151,13 +154,26 @@ struct Send: AsyncParsableCommand {
     @Flag(help: "Print the service acknowledgement as JSON.")
     var json = false
 
+    func validate() throws {
+        guard (title != nil) != (file != nil) else {
+            throw ValidationError("Provide a headline or --file PATH.")
+        }
+        if file != nil && (summary != nil || status != nil) {
+            throw ValidationError("Put summary and status in the JSON file when using --file.")
+        }
+    }
+
     func run() async throws {
-        let request = try AlertRequest(
-            title: title, summary: summary,
-            activityID: activityID ?? StableIdentity.manualActivityID(directory: FileManager.default.currentDirectoryPath),
-            status: status, event: event
-        )
-        let response = try await AgentAlertsClient().send(request, token: TokenStore().read())
+        let id = activityID ?? StableIdentity.manualActivityID(directory: FileManager.default.currentDirectoryPath)
+        let client = AgentAlertsClient()
+        let response: SendResponse
+        if let file {
+            let request = try AlertFileRequest(contentsOf: URL(fileURLWithPath: file), activityID: id, event: event)
+            response = try await client.send(request, token: TokenStore().read())
+        } else {
+            let request = try AlertRequest(title: title ?? "", summary: summary, activityID: id, status: status ?? .good, event: event)
+            response = try await client.send(request, token: TokenStore().read())
+        }
         if json { try printJSON(response) } else { print(response.description) }
         if !response.accepted { throw ExitCode.failure }
     }

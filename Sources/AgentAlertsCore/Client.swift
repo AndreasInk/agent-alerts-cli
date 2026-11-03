@@ -34,6 +34,10 @@ public struct AgentAlertsClient: Sendable {
         try await request(body: JSONEncoder().encode(alert), token: token, idempotencyKey: alert.idempotencyKey)
     }
 
+    public func send(_ alert: AlertFileRequest, token: String) async throws -> SendResponse {
+        try await request(body: alert.body, token: token, idempotencyKey: alert.idempotencyKey)
+    }
+
     public func interactionStatus(id: String, token: String) async throws -> InteractionStatusResponse {
         guard UUID(uuidString: id) != nil else { throw AppError("Invalid approval interaction ID.") }
         return try await request(

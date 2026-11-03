@@ -17,6 +17,40 @@ for command in setup send hooks; do
 done
 "$binary" --version
 "$binary" send --help > /dev/null
+python3 - "$binary" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+binary = sys.argv[1]
+environment = os.environ.copy()
+environment.pop("AGENTALERTS_AGENT_TOKEN", None)
+environment.pop("REPORTKIT_AGENT_TOKEN", None)
+
+def run(arguments):
+    return subprocess.run([binary, "send", *arguments], env=environment, text=True, capture_output=True, timeout=10)
+
+for arguments in [[], ["Build", "--file", "missing.json"], ["--file", "missing.json", "--status", "good"], ["--file", "missing.json", "--summary", "Done"]]:
+    result = run(arguments)
+    assert result.returncode != 0
+    assert "Provide a headline or --file" in result.stderr or "Put summary and status" in result.stderr
+
+for name in ["progress", "build-health"]:
+    # Valid file input reaches token lookup; no token means no network request.
+    result = run(["--file", f"examples/{name}.json", "--activity-id", "checks"])
+    assert result.returncode != 0 and "No Agent Alerts token" in result.stderr, result.stderr
+
+with tempfile.TemporaryDirectory() as directory:
+    file = Path(directory) / "invalid.json"
+    for content in ['not JSON', json.dumps({"title": "Build", "activity_id": "unexpected"})]:
+        file.write_text(content)
+        result = run(["--file", str(file)])
+        assert result.returncode != 0
+        assert "JSON file" in result.stderr and "No Agent Alerts token" not in result.stderr
+PY
 "$binary" setup --json > "$task_temp/setup.json"
 python3 - "$task_temp/setup.json" <<'PY'
 import json
