@@ -10,6 +10,7 @@ Start with the [README](../README.md) for installation and your first alert.
 | `--activity-id ID` | Stable identifier for the current directory |
 | `--status good\|warning\|critical` | `good` |
 | `--event start\|update\|end` | `update`, starting an activity if needed |
+| `--file PATH` | Read a JSON content file instead of a headline |
 | `--json` | Print a machine-readable acknowledgement |
 
 Keep titles to 32 characters and summaries to 96. Start/update also send a notification; ending closes the activity.
@@ -21,6 +22,51 @@ agentalerts send "Deploy finished" --activity-id deploy --event end
 ```
 
 Requests go to `https://www.andreas.ink/api/agent`. An acknowledgement describes service/APNs acceptance, not confirmation that an alert appeared on iPhone. Failed or incomplete sends return a nonzero exit code. The CLI does not automatically retry.
+
+Updates reuse the activity with the supplied ID, starting one if needed. Explicit `start` requests a new activity; use the default update for repeat sends. `end` targets an existing activity and never starts one. If no matching activity is registered, it returns a nonzero exit code. After starting, the iPhone needs to register its update token before an update or end can reach that activity.
+
+## Custom layouts
+
+```bash
+agentalerts send --file examples/progress.json --activity-id checks
+# Edit the values in the file, then send the complete content again.
+agentalerts send --file examples/progress.json --activity-id checks
+agentalerts send "Checks finished" --activity-id checks --event end
+```
+
+Run these from the cloned repository, or use the path to your own JSON file. `--file` replaces the positional headline, `--summary`, and `--status`; put that content in the file. `--activity-id`, `--event`, and `--json` work with either input style. Normal sends remain `agentalerts send "Build finished"`.
+
+The file is a Live Activity **content object**, without a `payload` wrapper. It requires `title` (up to 32 characters); `summary` defaults to the title and `status` defaults to `good`. The CLI adds the current timestamp, a fresh request key, and routing information on every send. Keep tokens, timestamps, activity IDs, and other request fields out of the file.
+
+For a custom layout, set `template` to `builder` and provide a version-1 `builderSpec`. A minimal layout looks like:
+
+```json
+{
+  "title": "Build finished",
+  "template": "builder",
+  "builderSpec": {
+    "version": 1,
+    "surfaces": {
+      "lockScreen": { "type": "text", "text": "All checks passed", "role": "title" }
+    }
+  }
+}
+```
+
+Copy either complete example:
+
+| File | Layout |
+| --- | --- |
+| [progress.json](../examples/progress.json) | Check count beside a progress ring |
+| [build-health.json](../examples/build-health.json) | Build time above a bar chart |
+
+`surfaces.lockScreen` is required. Optional `compact`, `minimal`, and `expanded` surfaces customize the Dynamic Island; the app supplies fallbacks for omitted surfaces. Keep compact and minimal content short. The examples include both.
+
+Use `vstack`, `hstack`, `zstack`, or `grid` to arrange `text`, `metric`, `chart`, `progress`, `documentPreview`, `statusDot`, `imageSymbol`, `button`, `spacer`, and `divider` nodes. These are constrained components rendered by the app; JSON cannot supply arbitrary SwiftUI, HTML, or code. The CLI sends literal layout content; it does not run scripts or expand variables.
+
+Each container supports at most 8 children, with at most 5 levels of nesting below the root. Node text is limited to 96 characters, chart values to 16 numbers, and progress to 0–100. A layout file is limited to 64 KiB; the actual compact APNs message, including its service envelope, must fit within **4096 bytes**. The CLI checks a conservative budget, including a possible start when updating and room for the service's number formatting. The service validates component fields and bindings; invalid layouts fail the send. Keep the layout small enough to read on iPhone.
+
+The supported file fields use camelCase: `title`, `summary`, `status`, `sourceName`, `sourceIcon`, `template`, `builderSpec`, `data`, `action`, `deepLink`, `inlineLabel`, `primaryLabel`, `primaryValue`, `primaryDelta`, `secondaryLabel`, `secondaryValue`, `footer`, `chartValues`, `chartTitle`, `chartStyle`, `progressPercent`, `completedSteps`, `totalSteps`, `progressStyle`, `visualStyle`, `accentHex`, and `glassOpacity`. The file is sent as complete content, without merging the previous activity's fields.
 
 ## Credentials
 

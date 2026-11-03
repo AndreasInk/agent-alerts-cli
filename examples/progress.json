@@ -1,0 +1,28 @@
+{
+  "title": "Release checks",
+  "summary": "18 of 24 checks passed.",
+  "status": "good",
+  "template": "builder",
+  "accentHex": "#50C9A1",
+  "builderSpec": {
+    "version": 1,
+    "surfaces": {
+      "lockScreen": {
+        "type": "vstack",
+        "spacing": "small",
+        "children": [
+          { "type": "text", "text": "Release checks", "role": "title" },
+          {
+            "type": "hstack",
+            "children": [
+              { "type": "metric", "label": "Checks passed", "value": "18 / 24" },
+              { "type": "progress", "style": "ring", "progress": 75 }
+            ]
+          }
+        ]
+      },
+      "compact": { "type": "text", "text": "18 / 24", "role": "caption" },
+      "minimal": { "type": "statusDot" }
+    }
+  }
+}

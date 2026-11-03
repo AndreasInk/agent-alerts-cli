@@ -45,12 +45,11 @@ import Testing
         #expect(body["activityId"] == nil)
     }
 
-    @Test func startAndEndDoNotUpsert() throws {
-        for event in [AlertEvent.start, .end] {
-            let request = try AlertRequest(title: "Build", activityID: "build", event: event)
-            #expect(request.updateMode == nil)
-        }
+    @Test func endTargetsAnExistingActivityWithoutStartingOne() throws {
+        let started = try AlertRequest(title: "Build", activityID: "build", event: .start)
+        #expect(started.updateMode == nil)
         let ended = try AlertRequest(title: "Done", activityID: "build", event: .end)
+        #expect(ended.updateMode == "update_existing")
         #expect(ended.notification == nil)
         #expect(ended.surfaces == ["live_activity"])
     }

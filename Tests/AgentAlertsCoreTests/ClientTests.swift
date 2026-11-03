@@ -84,6 +84,40 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(response.successCount == 1)
     }
 
+    @Test func sendsFileContentThroughTheAuthenticatedPublicRequestPath() async throws {
+        let alert = try AlertFileRequest(data: Data(#"{"title":"Build","template":"builder","builderSpec":{"version":1,"surfaces":{"lockScreen":{"type":"progress","progress":75}}}}"#.utf8), activityID: "checks")
+        let expectedKey = alert.idempotencyKey
+        let token = token
+        let session = session { request in
+            #expect(request.url == AgentAlertsClient.endpoint)
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)")
+            #expect(request.value(forHTTPHeaderField: "Idempotency-Key") == expectedKey)
+            var data = request.httpBody ?? Data()
+            if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    data.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(body["activity_id"] as? String == "checks")
+            #expect(body["update_mode"] as? String == "upsert_single")
+            let payload = try #require(body["payload"] as? [String: Any])
+            #expect(payload["template"] as? String == "builder")
+            let spec = try #require(payload["builderSpec"] as? [String: Any])
+            let surfaces = try #require(spec["surfaces"] as? [String: Any])
+            #expect((surfaces["lockScreen"] as? [String: Any])?["progress"] as? Int == 75)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(#"{"ok":true,"status":"sent"}"#.utf8))
+        }
+        defer { session.invalidateAndCancel() }
+        #expect(try await AgentAlertsClient(session: session).send(alert, token: token).accepted)
+    }
+
     @Test(arguments: [401, 403, 429, 500, 302])
     func httpErrorsNeverEchoResponseSecrets(status: Int) async throws {
         let token = token

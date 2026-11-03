@@ -16,6 +16,8 @@ Keep that surface small. Scheduling and account management belong elsewhere.
 - Deduplicate only explicit source request IDs. Missing or distinct IDs must not be collapsed. A disposable cache cannot be a prerequisite for delivery.
 - Both sending and reply polling use the public endpoint. Polling sends `operation: "interaction_status"`, the fresh interaction ID, and the same originating interactive token. Never reuse decisions or treat pending, expired, or malformed responses as approval.
 - Network/APNs acceptance and actual iPhone rendering are separate claims. Mock requests do not prove live delivery.
+- `send --file` reads a canonical content-state object, without a transport envelope. Reuse headline-send routing/notification defaults, generate fresh timestamps/keys, and preflight the 4096-byte APNs budget including a possible upsert start. The service owns detailed builder node validation. Keep examples free of timestamps, tokens, and routing keys.
+- End events use `update_existing` so the service targets the matching registered instance without starting another activity.
 - Keep `--version` and release tags aligned. Release tools must use checksums from real artifacts; never invent a release URL or checksum.
 
 Release preparation and manual acceptance checks live in [docs/releasing.md](docs/releasing.md).

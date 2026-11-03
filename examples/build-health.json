@@ -1,0 +1,22 @@
+{
+  "title": "Build health",
+  "summary": "Recent builds are faster.",
+  "status": "good",
+  "template": "builder",
+  "accentHex": "#80B5FF",
+  "builderSpec": {
+    "version": 1,
+    "surfaces": {
+      "lockScreen": {
+        "type": "vstack",
+        "spacing": "small",
+        "children": [
+          { "type": "metric", "label": "Build time", "value": "42s", "delta": "-8s" },
+          { "type": "chart", "style": "bar", "label": "Last six builds", "values": [64, 59, 61, 48, 50, 42] }
+        ]
+      },
+      "compact": { "type": "text", "text": "42s", "role": "caption" },
+      "minimal": { "type": "statusDot" }
+    }
+  }
+}

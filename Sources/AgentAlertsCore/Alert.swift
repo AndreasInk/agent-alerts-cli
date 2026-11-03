@@ -111,7 +111,11 @@ public struct AlertRequest: Codable, Sendable {
         self.idempotencyKey = try Self.text(idempotencyKey, label: "Idempotency key", limit: 200)
         let sourceName = try Self.text(sourceName ?? "Agent Alerts", label: "Source name", limit: 40)
         self.event = event
-        updateMode = event == .update ? "upsert_single" : nil
+        switch event {
+        case .start: updateMode = nil
+        case .update: updateMode = "upsert_single"
+        case .end: updateMode = "update_existing"
+        }
         surfaces = event == .end || !notify ? ["live_activity"] : ["live_activity", "notification"]
         payload = Payload(
             title: title, summary: summary, status: status,
