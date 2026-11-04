@@ -40,7 +40,6 @@ def formula_text(version, repository, artifacts):
     return f'''class Agentalerts < Formula
   desc "iPhone Live Activities and agent hooks from your terminal"
   homepage "{base}"
-  version "{version}"
   license "MIT"
 
   depends_on macos: :ventura

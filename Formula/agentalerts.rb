@@ -1,7 +1,6 @@
 class Agentalerts < Formula
   desc "iPhone Live Activities and agent hooks from your terminal"
   homepage "https://github.com/AndreasInk/agent-alerts-cli"
-  version "0.1.0"
   license "MIT"
 
   depends_on macos: :ventura
