@@ -14,10 +14,6 @@ brew install andreasink/agent-alerts-cli/agentalerts
 agentalerts --version
 ```
 
-No Swift toolchain or Node installation is required. See the [latest release](https://github.com/AndreasInk/agent-alerts-cli/releases/latest) for Apple Silicon and Intel archives and checksums.
-
-If another installation already provides `agentalerts`, use `brew install --skip-link andreasink/agent-alerts-cli/agentalerts` to preserve it. Run the Swift CLI using `"$(brew --prefix agentalerts)/bin/agentalerts"` until you choose which installation should supply the command on your `PATH`.
-
 To build from source instead, use Swift 6+:
 
 ```bash
