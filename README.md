@@ -6,7 +6,19 @@ Requires macOS 13+ and [Agent Alerts](https://www.andreas.ink/agent-alerts) on y
 
 ## Install
 
-Homebrew support is coming. For now, build with Swift 6+:
+Install the prebuilt Swift CLI with Homebrew:
+
+```bash
+brew tap andreasink/agent-alerts-cli https://github.com/AndreasInk/agent-alerts-cli.git
+brew install andreasink/agent-alerts-cli/agentalerts
+agentalerts --version
+```
+
+No Swift toolchain or Node installation is required. See the [latest release](https://github.com/AndreasInk/agent-alerts-cli/releases/latest) for Apple Silicon and Intel archives and checksums.
+
+If another installation already provides `agentalerts`, use `brew install --skip-link andreasink/agent-alerts-cli/agentalerts` to preserve it. Run the Swift CLI using `"$(brew --prefix agentalerts)/bin/agentalerts"` until you choose which installation should supply the command on your `PATH`.
+
+To build from source instead, use Swift 6+:
 
 ```bash
 git clone https://github.com/AndreasInk/agent-alerts-cli.git

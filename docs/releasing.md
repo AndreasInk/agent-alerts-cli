@@ -1,6 +1,6 @@
 # Releasing
 
-Release automation targets `AndreasInk/agent-alerts-cli`. The first binary release and Homebrew formula are still pending.
+Release automation targets `AndreasInk/agent-alerts-cli`. Published binaries and checksums are available on the [releases page](https://github.com/AndreasInk/agent-alerts-cli/releases); `Formula/agentalerts.rb` supplies the Homebrew tap.
 
 ## Prepare a release
 
@@ -36,7 +36,7 @@ shasum -a 256 -c SHA256SUMS
 
 This command expects all files listed in `SHA256SUMS` in the current directory. Copy the reviewed formula to `Formula/agentalerts.rb` and commit it. The checksums and URLs must refer to the published assets for the matching tag. The workflow does not commit or push a formula automatically.
 
-After the repository and release exist, the same repository can be used as a tap:
+The same repository is the tap:
 
 ```bash
 brew tap andreasink/agent-alerts-cli https://github.com/AndreasInk/agent-alerts-cli.git

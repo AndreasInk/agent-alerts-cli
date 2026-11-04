@@ -43,17 +43,16 @@ def formula_text(version, repository, artifacts):
   version "{version}"
   license "MIT"
 
-  depends_on :macos
   depends_on macos: :ventura
 
-  on_arm do
-    url "{base}/releases/download/v{version}/{archive_name(version, "arm64")}"
-    sha256 "{hashes["arm64"]}"
-  end
-
-  on_intel do
-    url "{base}/releases/download/v{version}/{archive_name(version, "x86_64")}"
-    sha256 "{hashes["x86_64"]}"
+  on_macos do
+    if Hardware::CPU.arm?
+      url "{base}/releases/download/v{version}/{archive_name(version, "arm64")}"
+      sha256 "{hashes["arm64"]}"
+    else
+      url "{base}/releases/download/v{version}/{archive_name(version, "x86_64")}"
+      sha256 "{hashes["x86_64"]}"
+    end
   end
 
   def install
@@ -64,6 +63,8 @@ def formula_text(version, repository, artifacts):
   test do
     assert_match "agentalerts", shell_output("#{{bin}}/agentalerts --help")
     assert_equal version.to_s, shell_output("#{{bin}}/agentalerts --version").strip
+    setup = JSON.parse(shell_output("#{{bin}}/agentalerts setup --json --name Homebrew"))
+    assert_equal "https://www.andreas.ink/agent?name=Homebrew", setup.fetch("setup_url")
   end
 end
 '''
