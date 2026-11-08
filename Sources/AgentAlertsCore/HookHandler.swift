@@ -61,11 +61,13 @@ public struct HookHandler: Sendable {
             let rawProject = URL(fileURLWithPath: cwd).lastPathComponent
             let projectScalars = rawProject.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
             let project = String(String.UnicodeScalarView(projectScalars.prefix(80)))
-            let summary = project.isEmpty ? "Your agent has an update." : "Project: \(project)."
+            let summary = project.isEmpty ? "Your project" : project
             let request = try AlertRequest(
-                title: kind.title(agent: agent), summary: summary,
+                title: kind.title, summary: summary,
                 activityID: "\(agent.rawValue)-\(sessionDigest.prefix(24))", status: kind.status,
-                sourceName: agent.displayName, notify: kind.notify, idempotencyKey: idempotency, now: time
+                sourceName: agent.displayName, notify: kind.notify,
+                notificationTitle: "\(agent.displayName) \(kind.title.lowercased())",
+                idempotencyKey: idempotency, now: time
             )
             try await send(request)
         } catch {
@@ -109,16 +111,16 @@ public struct HookHandler: Sendable {
 
         var notify: Bool { self != .planning && self != .working }
 
-        func title(agent: HookAgent) -> String {
+        var title: String {
             switch self {
-            case .planning: "\(agent.displayName) planning"
-            case .working: "\(agent.displayName) working"
-            case .planReady: "\(agent.displayName) plan ready"
-            case .planUpdate: "\(agent.displayName) plan updated"
-            case .completion: "\(agent.displayName) finished"
-            case .approval: "\(agent.displayName) needs approval"
-            case .input: "\(agent.displayName) needs your input"
-            case .failure: "\(agent.displayName) stopped with an error"
+            case .planning: "Planning"
+            case .working: "Working"
+            case .planReady: "Plan ready"
+            case .planUpdate: "Plan updated"
+            case .completion: "Turn finished"
+            case .approval: "Needs approval"
+            case .input: "Needs your input"
+            case .failure: "Stopped with an error"
             }
         }
     }

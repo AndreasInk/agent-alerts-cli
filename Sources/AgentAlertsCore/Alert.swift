@@ -102,6 +102,7 @@ public struct AlertRequest: Codable, Sendable {
         notify: Bool = true,
         interaction: AlertInteraction? = nil,
         notificationBody: String? = nil,
+        notificationTitle: String? = nil,
         idempotencyKey: String = UUID().uuidString,
         now: Date = Date()
     ) throws {
@@ -127,7 +128,8 @@ public struct AlertRequest: Codable, Sendable {
         guard interaction == nil || (notify && event != .end) else {
             throw AppError("An approval request requires a notification.")
         }
-        notification = event == .end || !notify ? nil : Notification(title: title, body: body)
+        let notificationTitle = try Self.text(notificationTitle ?? title, label: "Notification title", limit: 32)
+        notification = event == .end || !notify ? nil : Notification(title: notificationTitle, body: body)
         self.interaction = interaction
         apnsEnvironment = "production"
         attributesType = event == .start ? "ReportKitSimpleAttributes" : nil

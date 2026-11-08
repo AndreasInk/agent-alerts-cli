@@ -59,6 +59,21 @@ struct HookHandlerTests {
         )
     }
 
+    @Test func conciseTitlesRetainAgentIdentityOnlyInNotifications() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for agent in HookAgent.allCases {
+            let recorder = HookRecorder()
+            try await handler(root).handle(agent: agent, input: input()) {
+                await recorder.record($0)
+            }
+            let request = try #require(await recorder.requests.first)
+            #expect(request.payload.title == "Turn finished")
+            #expect(request.payload.summary == "Important Project")
+            #expect(request.notification?.title == "\(agent.displayName) turn finished")
+        }
+    }
+
     @Test func completionUsesGenericCopyAndNoPrivateContent() async throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -69,10 +84,12 @@ struct HookHandlerTests {
         let sent = await recorder.requests
         #expect(sent.count == 1)
         let request = try #require(sent.first)
-        #expect(request.payload.title == "Codex finished")
-        #expect(request.payload.summary == "Project: Important Project.")
+        #expect(request.payload.title == "Turn finished")
+        #expect(request.payload.summary == "Important Project")
         #expect(request.payload.status == .good)
         #expect(request.payload.sourceName == "Codex")
+        #expect(request.notification?.title == "Codex turn finished")
+        #expect(request.notification?.body == "Important Project")
         #expect(request.updateMode == "upsert_single")
         let encoded = try #require(String(data: JSONEncoder().encode(request), encoding: .utf8))
         #expect(!encoded.contains("PRIVATE"))
@@ -156,7 +173,7 @@ struct HookHandlerTests {
         }
         let sent = await recorder.requests
         #expect(sent.map(\.payload.title) == [
-            "Claude needs approval", "Claude needs your input", "Claude needs your input", "Claude needs your input", "Claude stopped with an error",
+            "Needs approval", "Needs your input", "Needs your input", "Needs your input", "Stopped with an error",
         ])
         #expect(sent.map(\.payload.status) == [.warning, .warning, .warning, .warning, .critical])
     }
@@ -325,7 +342,7 @@ struct HookHandlerTests {
             }
             let sent = await recorder.requests
             #expect(sent.map(\.payload.title) == [
-                "\(agent.displayName) planning", "\(agent.displayName) working", "\(agent.displayName) working", "\(agent.displayName) working",
+                "Planning", "Working", "Working", "Working",
             ])
             #expect(sent.allSatisfy { $0.surfaces == ["live_activity"] && $0.notification == nil && $0.payload.status == .good })
             #expect(Set(sent.map(\.activityID)).count == 1)
@@ -341,7 +358,7 @@ struct HookHandlerTests {
         let recorder = HookRecorder()
         try await handler(root).handle(agent: .codex, input: input("UserPromptSubmit")) { await recorder.record($0) }
         let sent = await recorder.requests
-        #expect(sent.first?.payload.title == "Codex working")
+        #expect(sent.first?.payload.title == "Working")
         #expect(sent.first?.notification == nil)
     }
 
@@ -355,7 +372,7 @@ struct HookHandlerTests {
             ) { await recorder.record($0) }
         }
         let sent = await recorder.requests
-        #expect(sent.map(\.payload.title) == ["Codex plan updated", "Claude plan updated"])
+        #expect(sent.map(\.payload.title) == ["Plan updated", "Plan updated"])
         #expect(sent.allSatisfy { $0.payload.status == .good && $0.notification != nil && $0.surfaces.contains("notification") })
     }
 
@@ -367,7 +384,7 @@ struct HookHandlerTests {
         try await handler(root, time: 1001).handle(agent: .claude, input: input("PermissionRequest", extras: ["tool_name": "ExitPlanMode"])) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.count == 1)
-        #expect(sent.first?.payload.title == "Claude plan ready")
+        #expect(sent.first?.payload.title == "Plan ready")
     }
 
     @Test func modeProgressUsesTheSameActivityAsCompletion() async throws {
@@ -383,7 +400,7 @@ struct HookHandlerTests {
             try await handler(root).handle(agent: .codex, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
-        #expect(sent.map(\.payload.title) == ["Codex planning", "Codex plan updated", "Codex working", "Codex finished"])
+        #expect(sent.map(\.payload.title) == ["Planning", "Plan updated", "Working", "Turn finished"])
         #expect(Set(sent.map(\.activityID)).count == 1)
     }
 
@@ -400,7 +417,7 @@ struct HookHandlerTests {
         }
         let sent = await recorder.requests
         #expect(sent.count == 3)
-        #expect(sent.first?.payload.title == "Claude planning")
+        #expect(sent.first?.payload.title == "Planning")
         #expect(sent.first?.notification == nil)
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("agent-alerts").path))
     }
@@ -414,7 +431,7 @@ struct HookHandlerTests {
         ) { await recorder.record($0) }
         let sent = await recorder.requests
         #expect(sent.count == 1)
-        #expect(sent.first?.payload.title == "Codex working")
+        #expect(sent.first?.payload.title == "Working")
         #expect(sent.first?.notification == nil)
     }
 }
