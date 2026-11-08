@@ -25,6 +25,24 @@ import Testing
         }
     }
 
+    @Test func notificationTitleCanDifferWithoutChangingPayloadOrWireShape() throws {
+        let request = try AlertRequest(
+            title: "Turn finished", summary: "Example", activityID: "session",
+            notificationTitle: "Codex turn finished"
+        )
+        #expect(request.payload.title == "Turn finished")
+        #expect(request.notification?.title == "Codex turn finished")
+        let body = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        #expect(body["notificationTitle"] == nil)
+        #expect(body["notification_title"] == nil)
+        #expect(try AlertRequest(title: "Build finished", activityID: "build").notification?.title == "Build finished")
+        for invalid in [" ", String(repeating: "a", count: 33), "Invalid\nTitle"] {
+            #expect(throws: AppError.self) {
+                try AlertRequest(title: "Build", activityID: "build", notificationTitle: invalid)
+            }
+        }
+    }
+
     @Test func updateUsesExistingHostedContract() throws {
         let request = try AlertRequest(title: "Build finished", activityID: "build")
         let body = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])

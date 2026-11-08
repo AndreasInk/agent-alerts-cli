@@ -83,6 +83,8 @@ The Swift and existing TypeScript CLIs share the token file and executable name 
 
 ## Hooks
 
+Automatic Live Activity cards use a concise state title (for example, “Turn finished”) and the project basename, without repeating the agent name. Notifications retain the agent name in their title.
+
 Choose a specific agent:
 
 ```bash
