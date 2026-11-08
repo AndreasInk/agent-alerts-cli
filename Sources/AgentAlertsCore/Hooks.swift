@@ -58,6 +58,15 @@ public struct HookInstaller {
         let configurations = try target.agents.map { agent -> (HookAgent, URL, [String: Any], Data?) in
             let url = configURL(agent)
             let (root, original) = try readConfiguration(url)
+            let hooks = root["hooks"] as? [String: [[String: Any]]] ?? [:]
+            for definition in definitions(for: agent) {
+                let count = (hooks[definition.event] ?? []).filter { $0["matcher"] as? String == definition.matcher }
+                    .flatMap { $0["hooks"] as? [[String: Any]] ?? [] }
+                    .filter { managedOptions($0, agent: agent) != nil }.count
+                guard count <= 1 else {
+                    throw HookError("Duplicate managed \(definition.event) hooks at \(url.path). Resolve duplicates in the agent's hook settings before reinstalling; indices were left unchanged.")
+                }
+            }
             return (agent, url, root, original)
         }
         return try configurations.map { agent, url, root, original in
@@ -65,18 +74,34 @@ public struct HookInstaller {
             if target == .all && !present {
                 return result(agent, present: false, root: root, path: url, changed: false)
             }
-            var edited = removingManagedHooks(from: root, agent: agent)
+            var edited = root
             var hooks = edited["hooks"] as? [String: Any] ?? [:]
             for definition in definitions(for: agent) {
                 let waitsForReply = definition.event == "PermissionRequest" && approvals == .phone
                 var groups = hooks[definition.event] as? [[String: Any]] ?? []
-                var group: [String: Any] = ["hooks": [[
+                let handler: [String: Any] = [
                     "type": "command",
                     "command": command(for: agent, approvals: waitsForReply ? .phone : .local),
-                    "timeout": waitsForReply ? 86_415 : 8,
-                ]]]
-                if let matcher = definition.matcher { group["matcher"] = matcher }
-                groups.append(group)
+                    "timeout": waitsForReply ? 86_415 : (definition.event == "SessionEnd" ? 3 : 8),
+                ]
+                // Codex trust/disabled state uses group and handler indices. Keep
+                // existing handlers in place; append only genuinely new events.
+                var replaced = false
+                for index in groups.indices where groups[index]["matcher"] as? String == definition.matcher {
+                    var handlers = groups[index]["hooks"] as? [[String: Any]] ?? []
+                    for handlerIndex in handlers.indices where managedOptions(handlers[handlerIndex], agent: agent) != nil {
+                        handlers[handlerIndex].merge(handler, uniquingKeysWith: { _, new in new })
+                        if definition.event == "SessionEnd" || waitsForReply { handlers[handlerIndex].removeValue(forKey: "async") }
+                        replaced = true
+                    }
+                    groups[index]["hooks"] = handlers
+                }
+                if !replaced {
+                    var group: [String: Any] = ["hooks": [handler]]
+                    if let matcher = definition.matcher { group["matcher"] = matcher }
+                    groups.append(group)
+                }
+
                 hooks[definition.event] = groups
             }
             edited["hooks"] = hooks
@@ -133,11 +158,16 @@ public struct HookInstaller {
 
     private func definitions(for agent: HookAgent) -> [Definition] {
         if agent == .codex {
-            return [Definition(event: "UserPromptSubmit"), Definition(event: "Stop"), Definition(event: "PermissionRequest")]
+            return [Definition(event: "UserPromptSubmit"), Definition(event: "PostToolUse"),
+                    Definition(event: "SubagentStart"), Definition(event: "Stop"),
+                    Definition(event: "SessionEnd"), Definition(event: "PermissionRequest")]
         }
         return [
             Definition(event: "UserPromptSubmit"),
+            Definition(event: "PostToolUse"),
+            Definition(event: "SubagentStart"),
             Definition(event: "Stop"),
+            Definition(event: "SessionEnd"),
             Definition(event: "StopFailure"),
             Definition(event: "PermissionRequest"),
             Definition(event: "PreToolUse", matcher: "^(AskUserQuestion|ExitPlanMode)$"),

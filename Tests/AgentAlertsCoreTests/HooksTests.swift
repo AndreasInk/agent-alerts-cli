@@ -15,7 +15,7 @@ struct HooksTests {
         let hooks = try #require(object["hooks"] as? [String: [[String: Any]]])
         for (name, groups) in hooks {
             let command = try #require((groups[0]["hooks"] as? [[String: Any]])?.first)
-            #expect(command["timeout"] as? Int == (name == "PermissionRequest" ? 86_415 : 8))
+            #expect(command["timeout"] as? Int == (name == "PermissionRequest" ? 86_415 : (name == "SessionEnd" ? 3 : 8)))
             #expect((command["command"] as? String)?.contains("--approvals phone") == (name == "PermissionRequest"))
             #expect(command["async"] == nil)
         }
@@ -121,6 +121,80 @@ struct HooksTests {
         #expect(try installer(root).uninstall(target: .codex)[0].changed)
     }
 
+    @Test func reinstallPreservesUnrelatedHookIndicesAndState() throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configured = installer(root)
+        _ = try configured.install(target: .codex)
+        let file = root.appendingPathComponent(".codex/hooks.json")
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        var hooks = try #require(object["hooks"] as? [String: [[String: Any]]])
+        let unrelated: [String: Any] = ["hooks": [["type": "command", "command": "echo unrelated"]]]
+        hooks["Stop", default: []].append(unrelated)
+        object["hooks"] = hooks
+        try write(object, to: file)
+        let stateFile = root.appendingPathComponent(".codex/config.toml")
+        let state = Data("[hooks.state.\"\(file.path):stop:1:0\"]\nenabled = false\ntrusted_hash = \"preserve-existing-trust\"\n".utf8)
+        try state.write(to: stateFile)
+        _ = try installer(root, executable: "/new/agentalerts").install(target: .codex)
+        let updated = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let updatedHooks = try #require(updated["hooks"] as? [String: [[String: Any]]])
+        #expect(NSDictionary(dictionary: try #require(updatedHooks["Stop"]?[1])).isEqual(to: unrelated))
+        #expect(try Data(contentsOf: stateFile) == state)
+    }
+
+    @Test func managedHandlerMetadataSurvivesReinstallAndDuplicatesFailClosed() throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try installer(root).install(target: .codex)
+        let file = root.appendingPathComponent(".codex/hooks.json")
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        var hooks = try #require(object["hooks"] as? [String: [[String: Any]]])
+        var groups = try #require(hooks["Stop"])
+        var handlers = try #require(groups[0]["hooks"] as? [[String: Any]])
+        handlers[0]["statusMessage"] = "My existing label"
+        handlers[0]["enabled"] = false
+        groups[0]["hooks"] = handlers
+        hooks["Stop"] = groups
+        object["hooks"] = hooks
+        try write(object, to: file)
+        _ = try installer(root).install(target: .codex)
+        object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        hooks = try #require(object["hooks"] as? [String: [[String: Any]]])
+        groups = try #require(hooks["Stop"])
+        handlers = try #require(groups[0]["hooks"] as? [[String: Any]])
+        #expect(handlers[0]["statusMessage"] as? String == "My existing label")
+        #expect(handlers[0]["enabled"] as? Bool == false)
+        groups.append(groups[0])
+        hooks["Stop"] = groups
+        object["hooks"] = hooks
+        try write(object, to: file)
+        let before = try Data(contentsOf: file)
+        #expect(throws: AppError.self) { try installer(root).install(target: .codex) }
+        #expect(try Data(contentsOf: file) == before)
+    }
+
+    @Test func phoneApprovalReinstallRemovesAsynchronousOverride() throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try installer(root).install(target: .codex)
+        let file = root.appendingPathComponent(".codex/hooks.json")
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        var hooks = try #require(object["hooks"] as? [String: [[String: Any]]])
+        var groups = try #require(hooks["PermissionRequest"])
+        var handlers = try #require(groups[0]["hooks"] as? [[String: Any]])
+        handlers[0]["async"] = true
+        groups[0]["hooks"] = handlers
+        hooks["PermissionRequest"] = groups
+        object["hooks"] = hooks
+        try write(object, to: file)
+        _ = try installer(root).install(target: .codex, approvals: .phone)
+        object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        hooks = try #require(object["hooks"] as? [String: [[String: Any]]])
+        handlers = try #require(hooks["PermissionRequest"]?[0]["hooks"] as? [[String: Any]])
+        #expect(handlers[0]["async"] == nil)
+    }
+
     @Test func executableWithQuoteRemainsManaged() throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -211,6 +285,15 @@ struct HooksTests {
         let claudeHooks = try #require(claudeRoot["hooks"] as? [String: Any])
         #expect(codexHooks["UserPromptSubmit"] != nil)
         #expect(claudeHooks["UserPromptSubmit"] != nil)
+        for hooks in [codexHooks, claudeHooks] {
+            #expect(hooks["PostToolUse"] != nil)
+            #expect(hooks["SubagentStart"] != nil)
+            let end = try #require(hooks["SessionEnd"] as? [[String: Any]])
+            #expect(end.first?["matcher"] == nil)
+            let command = try #require((end.first?["hooks"] as? [[String: Any]])?.first)
+            #expect(command["timeout"] as? Int == 3)
+            #expect(command["async"] == nil)
+        }
         let preToolUse = try #require(claudeHooks["PreToolUse"] as? [[String: Any]])
         #expect(preToolUse.first?["matcher"] as? String == "^(AskUserQuestion|ExitPlanMode)$")
     }

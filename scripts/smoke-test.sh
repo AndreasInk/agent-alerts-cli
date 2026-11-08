@@ -76,6 +76,10 @@ import sys
 binary = sys.argv[1]
 config = json.load(open(sys.argv[2]))
 assert "--idle-seconds" not in json.dumps(config)
+for name in ["PostToolUse", "SubagentStart", "SessionEnd"]:
+    assert name in config["hooks"]
+assert config["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 3
+
 command = config["hooks"]["Stop"][0]["hooks"][0]["command"]
 # Execute the actual generated shell command. An incomplete event never sends.
 result = subprocess.run(["/bin/sh", "-c", command], input='{"hook_event_name":"Stop"}', text=True, capture_output=True, timeout=10)
@@ -130,6 +134,17 @@ result = subprocess.run(
 )
 assert result.returncode == 0 and json.loads(result.stdout) == {}
 assert "No Agent Alerts token" in result.stderr
+# Exercise real lifecycle dispatch with no credential and isolated state: end
+# cannot send, but its marker must suppress a subsequent stale tool update.
+common = {"session_id": "smoke-session", "cwd": "/private/tmp/smoke-project"}
+for name, expected_error in [("SessionEnd", True), ("PostToolUse", False), ("Stop", False)]:
+    event = dict(common, hook_event_name=name, tool_name="Bash")
+    result = subprocess.run(
+        [sys.argv[1], "_hook", "codex", "--idle-seconds", "0"], input=json.dumps(event),
+        text=True, capture_output=True, env=environment, timeout=4,
+    )
+    assert result.returncode == 0 and json.loads(result.stdout) == {}
+    assert ("No Agent Alerts token" in result.stderr) == expected_error
 PY
 "$binary" hooks uninstall codex
 python3 - "$CODEX_HOME/hooks.json" <<'PY'

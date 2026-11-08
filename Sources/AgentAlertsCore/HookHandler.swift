@@ -38,6 +38,27 @@ public struct HookHandler: Sendable {
         }
         let time = now()
         let sessionDigest = StableIdentity.digest(agent.rawValue + "\n" + session)
+        let progress = HookEventCache(directory: cacheDirectory, warning: warning, name: "progress")
+        let claim = UUID().uuidString
+        let startsWork = kind == .planning || kind == .working
+        if !startsWork && kind != .sessionEnd {
+            do { if try progress.hasEnded(key: sessionDigest) { return } }
+            catch { warning("Session state unavailable; existing attention delivery policy is unchanged.") }
+        }
+        if kind.isProgress {
+            do {
+                guard try progress.claimProgress(key: sessionDigest, phase: kind.rawValue, id: claim, at: time) else { return }
+            } catch {
+                // Optional tool updates must not become a flood if rate limiting is unavailable.
+                warning("Progress rate limit unavailable; quiet tool update skipped.")
+                return
+            }
+        }
+        if kind == .sessionEnd {
+            // Block later tool events even when cleanup cannot reach the service.
+            do { try progress.endProgress(key: sessionDigest, at: time) }
+            catch { warning("Could not record session end; cleanup will still be attempted.") }
+        }
         let isAttention = kind == .approval || kind == .input || kind == .planReady
         // Only source-provided request identities can prove two events are duplicates.
         // Uncorrelated attention events must each be delivered, even close together.
@@ -47,7 +68,6 @@ public struct HookHandler: Sendable {
         let identity = isAttention ? requestID.map { sessionDigest + "\n" + kind.rawValue + "\n" + $0 } : nil
         let idempotency = identity.map { "hook-" + StableIdentity.digest($0) } ?? UUID().uuidString
         let cache = HookEventCache(directory: cacheDirectory, warning: warning)
-        let claim = UUID().uuidString
         var claimed = false
         if let identity {
             do {
@@ -65,9 +85,21 @@ public struct HookHandler: Sendable {
             let request = try AlertRequest(
                 title: kind.title(agent: agent), summary: summary,
                 activityID: "\(agent.rawValue)-\(sessionDigest.prefix(24))", status: kind.status,
+                event: kind == .sessionEnd ? .end : .update,
+                updateExistingOnly: kind.isProgress,
+                dismissImmediately: kind == .sessionEnd,
                 sourceName: agent.displayName, notify: kind.notify, idempotencyKey: idempotency, now: time
             )
             try await send(request)
+            if kind.isProgress {
+                do { try progress.recordProgressSent(key: sessionDigest, phase: kind.rawValue, id: claim) }
+                catch { warning("Could not record progress receipt; subsequent updates remain rate limited.") }
+            }
+            if startsWork {
+                // A new prompt may deliberately resume a previously closed session.
+                do { try progress.resumeProgress(key: sessionDigest, at: time) }
+                catch { warning("Could not reset progress state; optional tool updates may be skipped.") }
+            }
         } catch {
             if claimed, let identity {
                 do { try cache.release(key: identity, id: claim) }
@@ -98,16 +130,23 @@ public struct HookHandler: Sendable {
         case approval
         case input
         case failure
+        case sessionEnd
+        case reading
+        case editing
+        case commands
+        case delegated
+
+        var isProgress: Bool { self == .reading || self == .editing || self == .commands || self == .delegated }
 
         var status: AlertStatus {
             switch self {
-            case .planning, .working, .planUpdate, .completion: .good
+            case .planning, .working, .planUpdate, .completion, .sessionEnd, .reading, .editing, .commands, .delegated: .good
             case .planReady, .approval, .input: .warning
             case .failure: .critical
             }
         }
 
-        var notify: Bool { self != .planning && self != .working }
+        var notify: Bool { self != .planning && self != .working && self != .sessionEnd && !isProgress }
 
         func title(agent: HookAgent) -> String {
             switch self {
@@ -115,10 +154,15 @@ public struct HookHandler: Sendable {
             case .working: "\(agent.displayName) working"
             case .planReady: "\(agent.displayName) plan ready"
             case .planUpdate: "\(agent.displayName) plan updated"
-            case .completion: "\(agent.displayName) finished"
+            case .completion: "\(agent.displayName) turn finished"
             case .approval: "\(agent.displayName) needs approval"
             case .input: "\(agent.displayName) needs your input"
             case .failure: "\(agent.displayName) stopped with an error"
+            case .sessionEnd: "\(agent.displayName) session closed"
+            case .reading: "\(agent.displayName) inspecting files"
+            case .editing: "\(agent.displayName) editing files"
+            case .commands: "\(agent.displayName) command step"
+            case .delegated: "\(agent.displayName) delegated work"
             }
         }
     }
@@ -128,6 +172,17 @@ public struct HookHandler: Sendable {
         switch event["hook_event_name"] as? String {
         case "UserPromptSubmit": return isPlanning ? .planning : .working
         case "Stop": return isPlanning ? .planUpdate : .completion
+        case "SessionEnd": return .sessionEnd
+        case "SubagentStart": return .delegated
+        case "PostToolUse":
+            // Only a fixed tool-name allowlist influences copy. Never read inputs,
+            // outputs, transcript paths, command text, or arbitrary tool names.
+            switch event["tool_name"] as? String {
+            case "Read", "Glob", "Grep", "read_file", "list_dir", "grep_files": return .reading
+            case "Edit", "Write", "MultiEdit", "apply_patch": return .editing
+            case "Bash", "exec_command", "shell", "shell_command": return .commands
+            default: return nil
+            }
         case "PermissionRequest":
             // This precedes the final approval outcome. Another hook may allow
             // the action without user input. Claude's delayed permission_prompt
@@ -155,10 +210,78 @@ public struct HookHandler: Sendable {
 private struct HookEventCache {
     let directory: URL
     let warning: @Sendable (String) -> Void
+    var name: String = "events"
 
     private struct Entry: Codable {
         let id: String
         let time: TimeInterval
+        var phase: String? = nil
+        var endedAt: TimeInterval? = nil
+    }
+
+    func claimProgress(key: String, phase: String, id: String, at date: Date) throws -> Bool {
+        try edit { entries in
+            let time = date.timeIntervalSince1970
+            entries = entries.filter { time - max($0.value.time, $0.value.endedAt ?? 0) < 86_400 }
+            let digest = StableIdentity.digest(key)
+            if let previous = entries[digest] {
+                guard previous.endedAt == nil, previous.phase != phase, time - previous.time >= 60 else { return false }
+            }
+            if entries.count >= 256, let oldest = entries.min(by: { $0.value.time < $1.value.time })?.key {
+                entries.removeValue(forKey: oldest)
+            }
+            // Reserve the interval before networking. Only an accepted send commits
+            // its stage; an uncertain attempt still consumes this interval.
+            entries[digest] = Entry(id: id, time: time, phase: entries[digest]?.phase)
+            return true
+        }
+    }
+
+    func endProgress(key: String, at date: Date) throws {
+        _ = try edit { entries in
+            let time = date.timeIntervalSince1970
+            entries = entries.filter { time - max($0.value.time, $0.value.endedAt ?? 0) < 86_400 }
+            if entries.count >= 256, let oldest = entries.min(by: { $0.value.time < $1.value.time })?.key {
+                entries.removeValue(forKey: oldest)
+            }
+            let digest = StableIdentity.digest(key)
+            var entry = entries[digest] ?? Entry(id: UUID().uuidString, time: time - 60)
+            entry.endedAt = time
+            entries[digest] = entry
+            return true
+        }
+    }
+
+    func hasEnded(key: String) throws -> Bool {
+        guard FileManager.default.fileExists(atPath: directory.appendingPathComponent(name + ".json").path) else { return false }
+        var ended = false
+        _ = try edit { entries in
+            ended = entries[StableIdentity.digest(key)]?.endedAt != nil
+            return false
+        }
+        return ended
+    }
+
+    func resumeProgress(key: String, at date: Date) throws {
+        guard FileManager.default.fileExists(atPath: directory.appendingPathComponent(name + ".json").path) else { return }
+        _ = try edit { entries in
+            let digest = StableIdentity.digest(key)
+            guard var entry = entries[digest], let endedAt = entry.endedAt,
+                  endedAt < date.timeIntervalSince1970 else { return false }
+            entry.endedAt = nil
+            entries[digest] = entry
+            return true
+        }
+    }
+
+    func recordProgressSent(key: String, phase: String, id: String) throws {
+        _ = try edit { entries in
+            let digest = StableIdentity.digest(key)
+            guard var entry = entries[digest], entry.id == id, entry.endedAt == nil else { return false }
+            entry.phase = phase
+            entries[digest] = entry
+            return true
+        }
     }
 
     func claim(key: String, id: String, at date: Date) throws -> Bool {
@@ -199,7 +322,7 @@ private struct HookEventCache {
         guard lstat(directory.path, &info) == 0, info.st_uid == getuid(), info.st_mode & 0o022 == 0 else {
             throw HookError("Unsafe hook cache; deduplication unavailable.")
         }
-        let lock = directory.appendingPathComponent("events.lock")
+        let lock = directory.appendingPathComponent(name + ".lock")
         let descriptor = open(lock.path, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0o600)
         guard descriptor >= 0 else { throw HookError("Cannot lock hook cache; deduplication unavailable.") }
         defer { close(descriptor) }
@@ -208,7 +331,7 @@ private struct HookEventCache {
             throw HookError("Hook cache is busy or unsafe; deduplication unavailable.")
         }
         defer { flock(descriptor, LOCK_UN) }
-        let dataURL = directory.appendingPathComponent("events.json")
+        let dataURL = directory.appendingPathComponent(name + ".json")
         var entries: [String: Entry] = [:]
         let input = open(dataURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         if input >= 0 {

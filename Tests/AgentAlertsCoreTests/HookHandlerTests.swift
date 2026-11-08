@@ -69,7 +69,7 @@ struct HookHandlerTests {
         let sent = await recorder.requests
         #expect(sent.count == 1)
         let request = try #require(sent.first)
-        #expect(request.payload.title == "Codex finished")
+        #expect(request.payload.title == "Codex turn finished")
         #expect(request.payload.summary == "Project: Important Project.")
         #expect(request.payload.status == .good)
         #expect(request.payload.sourceName == "Codex")
@@ -383,7 +383,7 @@ struct HookHandlerTests {
             try await handler(root).handle(agent: .codex, input: data) { await recorder.record($0) }
         }
         let sent = await recorder.requests
-        #expect(sent.map(\.payload.title) == ["Codex planning", "Codex plan updated", "Codex working", "Codex finished"])
+        #expect(sent.map(\.payload.title) == ["Codex planning", "Codex plan updated", "Codex working", "Codex turn finished"])
         #expect(Set(sent.map(\.activityID)).count == 1)
     }
 
@@ -416,5 +416,185 @@ struct HookHandlerTests {
         #expect(sent.count == 1)
         #expect(sent.first?.payload.title == "Codex working")
         #expect(sent.first?.notification == nil)
+    }
+
+    @Test func sessionEndClosesOnlyItsActivityImmediatelyForBothAgents() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for agent in HookAgent.allCases {
+            try await handler(root).handle(
+                agent: agent, input: input("SessionEnd", extras: ["reason": "other"])
+            ) { await recorder.record($0) }
+        }
+        let sent = await recorder.requests
+        #expect(sent.count == 2)
+        #expect(sent.allSatisfy { $0.event == .end && $0.updateMode == "update_existing" && $0.notification == nil })
+        #expect(sent.allSatisfy { $0.surfaces == ["live_activity"] && $0.dismissalDate == 999 })
+        #expect(sent.map(\.payload.title) == ["Codex session closed", "Claude session closed"])
+    }
+
+    @Test func stopIsOnlyTurnCompletionAndSessionEndRetainsIdentity() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for name in ["UserPromptSubmit", "Stop", "UserPromptSubmit", "Stop", "SessionEnd"] {
+            try await handler(root).handle(agent: .codex, input: input(name)) { await recorder.record($0) }
+        }
+        let sent = await recorder.requests
+        #expect(sent.map(\.event) == [.update, .update, .update, .update, .end])
+        #expect(Set(sent.map(\.activityID)).count == 1)
+    }
+
+    @Test func toolProgressIsQuietGenericAndCannotStartAnActivity() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for (index, tool) in ["Read", "apply_patch", "exec_command"].enumerated() {
+            try await handler(root, time: 1000 + Double(index * 60)).handle(
+                agent: .codex, input: input("PostToolUse", extras: ["tool_name": tool, "tool_response": "PRIVATE OUTPUT"])
+            ) { await recorder.record($0) }
+        }
+        let sent = await recorder.requests
+        #expect(sent.map(\.payload.title) == ["Codex inspecting files", "Codex editing files", "Codex command step"])
+        #expect(sent.allSatisfy { $0.surfaces == ["live_activity"] && $0.notification == nil && $0.updateMode == "update_existing" })
+        let encoded = String(decoding: try JSONEncoder().encode(sent), as: UTF8.self)
+        #expect(!encoded.contains("PRIVATE") && !encoded.contains("progressPercent"))
+    }
+
+    @Test func progressRequiresStageChangeAndSixtySeconds() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for (time, tool) in [(1000.0, "Read"), (1001, "Edit"), (1059, "Bash"), (1060, "Read"), (1061, "Edit"), (1120, "Read"), (1121, "Bash")] {
+            try await handler(root, time: time).handle(
+                agent: .claude, input: input("PostToolUse", extras: ["tool_name": tool])
+            ) { await recorder.record($0) }
+        }
+        #expect(await recorder.requests.map(\.payload.title) == ["Claude inspecting files", "Claude editing files", "Claude command step"])
+    }
+
+    @Test func sessionEndBlocksLateProgressUntilNewPrompt() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for (time, name, tool) in [(1000.0, "SessionEnd", ""), (1120, "PostToolUse", "Read"), (1121, "SubagentStart", ""), (1122, "UserPromptSubmit", ""), (1123, "PostToolUse", "Read")] {
+            try await handler(root, time: time).handle(
+                agent: .codex, input: input(name, extras: ["tool_name": tool])
+            ) { await recorder.record($0) }
+        }
+        let sent = await recorder.requests
+        #expect(sent.map(\.payload.title) == ["Codex session closed", "Codex working", "Codex inspecting files"])
+        #expect(Set(sent.map(\.activityID)).count == 1)
+    }
+
+    @Test func progressThrottleIsSeparateFromAttentionAndSessionEnd() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for data in [try input("SubagentStart"), try input("Notification", extras: ["notification_type": "permission_prompt", "request_id": "one"]), try input("SessionEnd")] {
+            try await handler(root).handle(agent: .claude, input: data) { await recorder.record($0) }
+        }
+        #expect(await recorder.requests.count == 3)
+    }
+
+    @Test func progressIsPerSessionAndIgnoresUnknownToolNames() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for session in ["one", "two"] {
+            try await handler(root).handle(agent: .codex, input: input("PostToolUse", session: session, extras: ["tool_name": "Read"])) { await recorder.record($0) }
+        }
+        try await handler(root).handle(agent: .codex, input: input("PostToolUse", extras: ["tool_name": "PRIVATE CUSTOM TOOL"])) { await recorder.record($0) }
+        #expect(await recorder.requests.count == 2)
+    }
+
+    @Test func unsafeProgressCacheSkipsOptionalProgressButNotEnd() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = root.appendingPathComponent("agent-alerts")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let outside = root.appendingPathComponent("outside.json")
+        try Data("do not change".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: cache.appendingPathComponent("progress.json"), withDestinationURL: outside)
+        let recorder = HookRecorder()
+        for data in [try input("PostToolUse", extras: ["tool_name": "Read"]), try input("SessionEnd")] {
+            try await handler(root).handle(agent: .codex, input: data) { await recorder.record($0) }
+        }
+        #expect(await recorder.requests.map(\.event) == [.end])
+        #expect(try String(contentsOf: outside, encoding: .utf8) == "do not change")
+    }
+
+    @Test func promptDoesNotResetTheProgressRateLimit() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for (time, name, tool) in [(1000.0, "PostToolUse", "Read"), (1001, "UserPromptSubmit", ""), (1002, "PostToolUse", "Edit"), (1060, "PostToolUse", "Edit")] {
+            try await handler(root, time: time).handle(agent: .codex, input: input(name, extras: ["tool_name": tool])) { await recorder.record($0) }
+        }
+        #expect(await recorder.requests.map(\.payload.title) == ["Codex inspecting files", "Codex working", "Codex editing files"])
+    }
+
+    @Test func lateNonProgressEventsDoNotReopenAnEndedSession() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for data in [try input("SessionEnd"), try input("Stop"), try input("StopFailure"), try input("Notification", extras: ["notification_type": "permission_prompt"])] {
+            try await handler(root).handle(agent: .claude, input: data) { await recorder.record($0) }
+        }
+        #expect(await recorder.requests.map(\.event) == [.end])
+    }
+
+    @Test func completionAndAttentionRetainDeliveryWhenNoSessionStateExists() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        for data in [try input("Stop"), try input("StopFailure"), try input("Notification", extras: ["notification_type": "permission_prompt"])] {
+            try await handler(root).handle(agent: .claude, input: data) { await recorder.record($0) }
+        }
+        let sent = await recorder.requests
+        #expect(sent.count == 3)
+        #expect(sent.allSatisfy { $0.updateMode == "upsert_single" && $0.notification != nil })
+    }
+
+    @Test func olderPromptReceiptDoesNotEraseNewerSessionEnd() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        let prompt = try input("UserPromptSubmit")
+        let end = try input("SessionEnd")
+        let closingHandler = handler(root, time: 1001)
+        try await handler(root, time: 1000).handle(agent: .codex, input: prompt) { request in
+            await recorder.record(request)
+            try await closingHandler.handle(agent: .codex, input: end) { await recorder.record($0) }
+        }
+        try await handler(root, time: 1100).handle(agent: .codex, input: input("PostToolUse", extras: ["tool_name": "Read"])) { await recorder.record($0) }
+        #expect(await recorder.requests.map(\.event) == [.update, .end])
+    }
+
+    @Test func failedProgressConsumesIntervalButDoesNotSuppressStageForever() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        do {
+            try await handler(root, time: 1000).handle(agent: .codex, input: input("PostToolUse", extras: ["tool_name": "Read"])) { _ in throw AppError("Send failed") }
+            Issue.record("Expected send failure")
+        } catch {}
+        for time in [1001.0, 1060] {
+            try await handler(root, time: time).handle(agent: .codex, input: input("PostToolUse", extras: ["tool_name": "Read"])) { await recorder.record($0) }
+        }
+        #expect(await recorder.requests.count == 1)
+    }
+
+    @Test func failedStageChangePreservesLastAcceptedStage() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = HookRecorder()
+        try await handler(root, time: 1000).handle(agent: .codex, input: input("PostToolUse", extras: ["tool_name": "Read"])) { await recorder.record($0) }
+        do {
+            try await handler(root, time: 1060).handle(agent: .codex, input: input("PostToolUse", extras: ["tool_name": "Edit"])) { _ in throw AppError("Rejected") }
+        } catch {}
+        try await handler(root, time: 1120).handle(agent: .codex, input: input("PostToolUse", extras: ["tool_name": "Read"])) { await recorder.record($0) }
+        #expect(await recorder.requests.count == 1)
     }
 }
