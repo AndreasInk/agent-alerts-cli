@@ -75,6 +75,14 @@ import Testing
         #expect(request.updateMode == "upsert_single")
     }
 
+    @Test func hookLifecycleFieldsPreserveOrdinarySendDefaults() throws {
+        let end = try AlertRequest(title: "Closed", activityID: "session", event: .end, dismissImmediately: true, now: Date(timeIntervalSince1970: 1000))
+        let body = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(end)) as? [String: Any])
+        #expect(body["dismissal_date"] as? Int == 999)
+        #expect(try AlertRequest(title: "Manual end", activityID: "session", event: .end).dismissalDate == nil)
+        #expect(try AlertRequest(title: "Progress", activityID: "session", updateExistingOnly: true).updateMode == "update_existing")
+    }
+
     @Test func rejectsInvalidVisibleCopy() throws {
         #expect(throws: AppError.self) { try AlertRequest(title: " ", activityID: "test") }
         #expect(throws: AppError.self) { try AlertRequest(title: String(repeating: "a", count: 33), activityID: "test") }

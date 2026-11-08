@@ -22,6 +22,42 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 }
 
 @Suite(.serialized) struct ClientTests {
+    @Test func sessionEndNetworkBudgetFitsCodexHookDeadline() {
+        let configuration = AgentAlertsClient.configuration(forSessionEnd: true)
+        #expect(configuration.timeoutIntervalForRequest == 2)
+        #expect(configuration.timeoutIntervalForResource == 2)
+        #expect(AgentAlertsClient.configuration(forSessionEnd: false).timeoutIntervalForResource == 8)
+    }
+
+    @Test func endRequestSerializesExactActivityRoutingAndImmediateDismissal() async throws {
+        let session = session { request in
+            var data = request.httpBody ?? Data()
+            if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    data.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(body["event"] as? String == "end")
+            #expect(body["activity_id"] as? String == "codex-exact-session")
+            #expect(body["update_mode"] as? String == "update_existing")
+            #expect(body["dismissal_date"] as? Int == 999)
+            #expect(body["surfaces"] as? [String] == ["live_activity"])
+            #expect(body["notification"] == nil && body["attributes"] == nil)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data("{\"ok\":true,\"status\":\"sent\",\"target_count\":1,\"success_count\":1,\"failure_count\":0}".utf8))
+        }
+        defer { session.invalidateAndCancel() }
+        let request = try AlertRequest(title: "Session closed", activityID: "codex-exact-session", event: .end,
+                                       dismissImmediately: true, now: Date(timeIntervalSince1970: 1000))
+        let response = try await AgentAlertsClient(session: session).send(request, token: token)
+        #expect(response.accepted)
+    }
     @Test func pollsThePublicEndpointWithTheSameOriginatingToken() async throws {
         let token = token
         let id = UUID().uuidString

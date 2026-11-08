@@ -104,16 +104,30 @@ Changed Codex hook definitions require another `/hooks` trust review.
 | Prompt starts in another mode | Working |
 | Turn stops in plan mode | Plan updated |
 | Claude presents its plan for approval | Plan ready |
-| Turn stops outside plan mode | Finished |
+| Turn stops outside plan mode | Turn finished |
+| Recognized tool returns | Inspecting files, editing files, or command step |
+| Subagent starts | Delegated work |
+| Session ends | Close and immediately dismiss the session's activity |
 | Approval, question, or failure | Needs approval, needs input, or failed |
 
-Planning/working update only the Live Activity. Other supported passive events also notify, regardless of Mac keyboard or mouse activity. Existing hook commands with `--idle-seconds` still work, but the value is ignored. New hooks omit the flag. The legacy install option is accepted but hidden from help.
+Planning/working update only the Live Activity. Turn-completion and supported attention events also notify, regardless of Mac keyboard or mouse activity. Existing hook commands with `--idle-seconds` still work, but the value is ignored. New hooks omit the flag. The legacy install option is accepted but hidden from help.
 
 Claude approval alerts use its delayed `permission_prompt` notification. Early permission requests stay silent for both agents so automatically handled approvals do not notify. Codex lacks an equivalent passive user-attention signal, so manual approval prompts remain in Codex.
 
+Tool and delegation stages are quiet Live Activity updates. They send at most once per minute and only when the stage changes; skipped stages are not queued. They describe a tool category, not successful tests or measured completion. They never include command text, tool inputs/outputs, transcript content, or arbitrary tool names. Unknown tools stay quiet. Progress cannot create a new activity, and optional progress is skipped if its local rate-limit cache is unavailable.
+
+`Stop` ends a turn, not the conversation. It keeps the activity available for the next prompt. `SessionEnd` sends an end event with immediate dismissal, even while you are using the Mac. A later prompt may start the same session's activity again. Cleanup has a two-second network budget inside a three-second hook timeout; it does not retry or start a background worker. Abrupt shutdown, no network, or a host that never emits `SessionEnd` can prevent cleanup. API acceptance is not proof of on-device dismissal.
+
+Keep these hooks synchronous. Local state suppresses late tool/status events after session end. Without an end marker, completion/attention alerts retain their existing upsert behavior so they still notify after an activity expires or is dismissed. A missing cache or an update already in flight can prevent this suppression; network ordering is not an absolute cleanup guarantee.
+
+Codex emits `SessionEnd` on normal shutdown, when an open conversation is archived/deleted, or after 30 minutes idle with no connected client viewing it. Simply switching chats does not immediately end the session. Claude emits it on session exits such as `/clear`, logout, or exit. See the [Codex hook reference](https://learn.chatgpt.com/docs/hooks#sessionend) and [Claude hook reference](https://code.claude.com/docs/en/hooks#sessionend).
+
+After installing these new events, review them in Codex `/hooks`. Installation preserves existing handler positions and does not change trust hashes or disabled settings. Keep your current `--approvals` setting when reinstalling. Restart a Claude session if its hook configuration has already been loaded.
+
+
 Plan labels use the agent's reported mode. A stopped planning turn does not establish that an entire plan or goal is complete. Send goal milestones explicitly; the CLI does not estimate percentages. Passive hooks never read transcripts or send prompts, commands, or replies.
 
-Deduplication uses explicit request IDs only. Corrupt caches recover; unavailable caches cannot stop delivery.
+Attention deduplication uses explicit request IDs only. Corrupt caches recover; unavailable caches cannot stop attention or end delivery. Optional progress is skipped when it cannot be rate limited safely.
 
 ## Phone approvals
 

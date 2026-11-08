@@ -13,7 +13,8 @@ operation and connect with `setup --access interactive`. Check both agents with
 a genuine pending permission request: no action before the matching phone Yes,
 No denies just that request, pending continues waiting, and old/expired/error
 responses never approve. The permission hook is synchronous with a 24-hour wait
-and an 86,415-second host timeout. Other hooks stay at eight seconds. Also check
+and an 86,415-second host timeout. SessionEnd uses a three-second host timeout and
+two-second network budget; other hooks stay at eight seconds. Also check
 cancellation and local fallback for unsupported or oversized actions. Claude's
 questions, plan approval, and sandbox-network prompts remain native UI paths.
 

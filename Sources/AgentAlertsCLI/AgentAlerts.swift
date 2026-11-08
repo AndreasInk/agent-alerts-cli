@@ -47,7 +47,8 @@ enum Main {
         guard options.isEmpty || phoneApprovals else { throw AppError("Invalid hook invocation.") }
         let input = try FileHandle.standardInput.read(upToCount: 1_048_577) ?? Data()
         guard input.count <= 1_048_576 else { throw AppError("Hook event is too large; alert skipped.") }
-        let client = AgentAlertsClient()
+        let isSessionEnd = (try? JSONSerialization.jsonObject(with: input) as? [String: Any])?["hook_event_name"] as? String == "SessionEnd"
+        let client = AgentAlertsClient(forSessionEnd: isSessionEnd)
         if phoneApprovals {
             let token = try TokenStore().read()
             let decision = try await ApprovalCoordinator().request(

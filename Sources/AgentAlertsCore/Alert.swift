@@ -82,6 +82,7 @@ public struct AlertRequest: Codable, Sendable {
     public let attributes: Attributes?
     public let alert: StartAlert?
     public let interaction: AlertInteraction?
+    public let dismissalDate: Int?
 
     enum CodingKeys: String, CodingKey {
         case event, surfaces, payload, notification, attributes, alert, interaction
@@ -90,6 +91,7 @@ public struct AlertRequest: Codable, Sendable {
         case apnsEnvironment = "apns_env"
         case idempotencyKey = "idempotency_key"
         case attributesType = "attributes_type"
+        case dismissalDate = "dismissal_date"
     }
 
     public init(
@@ -98,6 +100,8 @@ public struct AlertRequest: Codable, Sendable {
         activityID: String,
         status: AlertStatus = .good,
         event: AlertEvent = .update,
+        updateExistingOnly: Bool = false,
+        dismissImmediately: Bool = false,
         sourceName: String? = nil,
         notify: Bool = true,
         interaction: AlertInteraction? = nil,
@@ -113,9 +117,10 @@ public struct AlertRequest: Codable, Sendable {
         self.event = event
         switch event {
         case .start: updateMode = nil
-        case .update: updateMode = "upsert_single"
+        case .update: updateMode = updateExistingOnly ? "update_existing" : "upsert_single"
         case .end: updateMode = "update_existing"
         }
+        dismissalDate = event == .end && dismissImmediately ? Int(now.timeIntervalSince1970) - 1 : nil
         surfaces = event == .end || !notify ? ["live_activity"] : ["live_activity", "notification"]
         payload = Payload(
             title: title, summary: summary, status: status,

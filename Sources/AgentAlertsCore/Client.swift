@@ -16,13 +16,18 @@ public struct AgentAlertsClient: Sendable {
     public static let endpoint = URL(string: "https://www.andreas.ink/api/agent")!
     private let session: URLSession
 
-    public init() {
+    public init(forSessionEnd: Bool = false) {
+        session = URLSession(configuration: Self.configuration(forSessionEnd: forSessionEnd), delegate: NoRedirects(), delegateQueue: nil)
+    }
+
+    static func configuration(forSessionEnd: Bool) -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 5
-        configuration.timeoutIntervalForResource = 8
+        // Codex gives SessionEnd at most three seconds, including process startup.
+        configuration.timeoutIntervalForRequest = forSessionEnd ? 2 : 5
+        configuration.timeoutIntervalForResource = forSessionEnd ? 2 : 8
         configuration.httpCookieStorage = nil
         configuration.urlCache = nil
-        session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
+        return configuration
     }
 
     // Tests inject a URLProtocol-backed session; the destination remains the public HTTPS endpoint.
