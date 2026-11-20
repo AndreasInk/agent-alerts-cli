@@ -155,6 +155,8 @@ public struct SendResponse: Codable, Sendable {
     public let retryable: Bool?
     public let upgradeStateStatus: String?
     public let eventID: String?
+    public let reportID: String?
+    public let reportExpiresAt: String?
     public let activityID: String?
     public let idempotencyKey: String?
     public let activityRoutingStatus: String?
@@ -173,6 +175,8 @@ public struct SendResponse: Codable, Sendable {
         case originalAlertDelivered = "original_alert_delivered"
         case upgradeStateStatus = "upgrade_state_status"
         case eventID = "event_id"
+        case reportID = "report_id"
+        case reportExpiresAt = "report_expires_at"
         case activityID = "activity_id"
         case idempotencyKey = "idempotency_key"
         case activityRoutingStatus = "activity_routing_status"
@@ -185,11 +189,17 @@ public struct SendResponse: Codable, Sendable {
     }
 
     public var accepted: Bool {
-        ok && ["sent", "queued", "would_be_quota_limited"].contains(status)
+        if status == "stored" {
+            return ok && reportID != nil && (failureCount ?? 0) == 0
+        }
+        return ok && ["sent", "queued", "would_be_quota_limited"].contains(status)
             && originalAlertDelivered != false && (failureCount ?? 0) == 0
     }
 
     public var description: String {
+        if status == "stored", reportID != nil {
+            return "Agent Alerts: report stored in Recent Alerts"
+        }
         let knownStatuses = ["sent", "queued", "partial", "failed", "no_targets", "no_active_activity",
                              "quota_limited", "would_be_quota_limited", "duplicate"]
         let label = knownStatuses.contains(status) ? status : "unrecognized response"
@@ -201,6 +211,7 @@ public struct SendResponse: Codable, Sendable {
             result += "; original alert not delivered"
         }
         if retryable == false { result += "; do not retry" }
+        if reportID != nil { result += " · report stored" }
         return result + " · not device-confirmed"
     }
 }

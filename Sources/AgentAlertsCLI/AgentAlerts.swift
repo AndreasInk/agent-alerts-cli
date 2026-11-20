@@ -125,18 +125,19 @@ struct Setup: ParsableCommand {
 }
 
 extension AlertEvent: ExpressibleByArgument {}
+extension AlertSurface: ExpressibleByArgument {}
 extension AlertStatus: ExpressibleByArgument {}
 extension HookTarget: ExpressibleByArgument {}
 extension HookApprovalMode: ExpressibleByArgument {}
 extension SetupAccess: ExpressibleByArgument {}
 
 struct Send: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Send a Live Activity and notification.")
+    static let configuration = CommandConfiguration(abstract: "Send an alert or publish a report.")
 
     @Argument(help: "A short headline, up to 32 characters.")
     var title: String?
 
-    @Option(help: "Read Live Activity content, including a custom layout, from a JSON file instead of a headline.")
+    @Option(help: "Read alert content, including custom layouts, from a JSON file instead of a headline.")
     var file: String?
 
     @Option(help: "Additional detail, up to 96 characters. Defaults to the headline.")
@@ -151,12 +152,18 @@ struct Send: AsyncParsableCommand {
     @Option(help: "Activity event: start, update, or end. Updates start an activity if needed.")
     var event: AlertEvent = .update
 
+    @Option(help: "Delivery surface for --file. Repeat for each of live_activity, in_app, and notification.")
+    var surface: [AlertSurface] = []
+
     @Flag(help: "Print the service acknowledgement as JSON.")
     var json = false
 
     func validate() throws {
         guard (title != nil) != (file != nil) else {
             throw ValidationError("Provide a headline or --file PATH.")
+        }
+        if file == nil && !surface.isEmpty {
+            throw ValidationError("--surface requires --file.")
         }
         if file != nil && (summary != nil || status != nil) {
             throw ValidationError("Put summary and status in the JSON file when using --file.")
@@ -168,7 +175,9 @@ struct Send: AsyncParsableCommand {
         let client = AgentAlertsClient()
         let response: SendResponse
         if let file {
-            let request = try AlertFileRequest(contentsOf: URL(fileURLWithPath: file), activityID: id, event: event)
+            let request = try AlertFileRequest(
+                contentsOf: URL(fileURLWithPath: file), activityID: id, event: event, surfaces: surface
+            )
             response = try await client.send(request, token: TokenStore().read())
         } else {
             let request = try AlertRequest(title: title ?? "", summary: summary, activityID: id, status: status ?? .good, event: event)

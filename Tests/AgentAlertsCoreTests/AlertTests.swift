@@ -117,6 +117,23 @@ import Testing
         #expect(!response.accepted)
     }
 
+    @Test func standaloneReportIsAcceptedAndPairedPushFailureRemainsVisible() throws {
+        let reportID = "1c95a766-2c9d-416f-a7c2-c04911674b08"
+        let expiry = "2026-12-01T12:00:00.000Z"
+        for status in ["stored", "no_targets", "partial"] {
+            let wire = try JSONSerialization.data(withJSONObject: [
+                "ok": true, "status": status, "report_id": reportID, "report_expires_at": expiry,
+                "target_count": 0, "success_count": 0, "failure_count": 0
+            ])
+            let response = try JSONDecoder().decode(SendResponse.self, from: wire)
+            #expect(response.accepted == (status == "stored"))
+            #expect(response.reportExpiresAt == expiry)
+            #expect(response.description.contains("report stored"))
+            let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(response)) as? [String: Any])
+            #expect(json["report_id"] as? String == reportID)
+        }
+    }
+
     @Test func acknowledgementRetainsCountsAndQuota() throws {
         let response = try JSONDecoder().decode(SendResponse.self, from: Data("""
         {"ok":true,"status":"quota_limited","target_count":2,"success_count":0,"failure_count":0,

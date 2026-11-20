@@ -118,7 +118,7 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(try await AgentAlertsClient(session: session).send(alert, token: token).accepted)
     }
 
-    @Test(arguments: [401, 403, 429, 500, 302])
+    @Test(arguments: [400, 401, 403, 429, 500, 302])
     func httpErrorsNeverEchoResponseSecrets(status: Int) async throws {
         let token = token
         let session = session { request in
@@ -137,6 +137,30 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
                 #expect(error.localizedDescription.contains("Check its permissions"))
                 #expect(!error.localizedDescription.contains("reconnect"))
             }
+        }
+    }
+
+    @Test func identifiesRejectedLayoutFieldsWithoutPrintingResponseContent() async throws {
+        let token = token
+        let session = session { request in
+            let data = try JSONSerialization.data(withJSONObject: [
+                "code": "invalid_json_render",
+                "path": "json_render.app.elements.\(token).props",
+                "error": token
+            ])
+            return (HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!, data)
+        }
+        defer { session.invalidateAndCancel() }
+        let alert = try AlertFileRequest(
+            data: Data(#"{"title":"Build","jsonRender":{"version":1,"app":{"root":"root","elements":{"root":{"type":"Text","props":{"text":"Hello"}}}}}}"#.utf8),
+            activityID: "test"
+        )
+        do {
+            _ = try await AgentAlertsClient(session: session).send(alert, token: token)
+            Issue.record("HTTP error accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("Check jsonRender.app.elements"))
+            #expect(!error.localizedDescription.contains(token))
         }
     }
 

@@ -11,6 +11,7 @@ Start with the [README](../README.md) for installation and your first alert.
 | `--status good\|warning\|critical` | `good` |
 | `--event start\|update\|end` | `update`, starting an activity if needed |
 | `--file PATH` | Read a JSON content file instead of a headline |
+| `--surface live_activity\|in_app\|notification` | Repeat for each delivery surface when using `--file` |
 | `--json` | Print a machine-readable acknowledgement |
 
 Keep titles to 32 characters and summaries to 96. Start/update also send a notification; ending closes the activity.
@@ -36,7 +37,7 @@ agentalerts send "Checks finished" --activity-id checks --event end
 
 Run these from the cloned repository, or use the path to your own JSON file. `--file` replaces the positional headline, `--summary`, and `--status`; put that content in the file. `--activity-id`, `--event`, and `--json` work with either input style. Normal sends remain `agentalerts send "Build finished"`.
 
-The file is a Live Activity **content object**, without a `payload` wrapper. It requires `title` (up to 32 characters); `summary` defaults to the title and `status` defaults to `good`. The CLI adds the current timestamp, a fresh request key, and routing information on every send. Keep tokens, timestamps, activity IDs, and other request fields out of the file.
+The file is an alert **content object**, without a `payload` wrapper. It requires `title` (up to 32 characters); `summary` defaults to the title and `status` defaults to `good`. The CLI adds the current timestamp, a fresh request key, and routing information on every send. Keep tokens, timestamps, activity IDs, and other request fields out of the file.
 
 For a custom layout, set `template` to `builder` and provide a version-1 `builderSpec`. A minimal layout looks like:
 
@@ -66,7 +67,21 @@ Use `vstack`, `hstack`, `zstack`, or `grid` to arrange `text`, `metric`, `chart`
 
 Each container supports at most 8 children, with at most 5 levels of nesting below the root. Node text is limited to 96 characters, chart values to 16 numbers, and progress to 0–100. A layout file is limited to 64 KiB; the actual compact APNs message, including its service envelope, must fit within **4096 bytes**. The CLI checks a conservative budget, including a possible start when updating and room for the service's number formatting. The service validates component fields and bindings; invalid layouts fail the send. Keep the layout small enough to read on iPhone.
 
-The supported file fields use camelCase: `title`, `summary`, `status`, `sourceName`, `sourceIcon`, `template`, `builderSpec`, `data`, `action`, `deepLink`, `inlineLabel`, `primaryLabel`, `primaryValue`, `primaryDelta`, `secondaryLabel`, `secondaryValue`, `footer`, `chartValues`, `chartTitle`, `chartStyle`, `progressPercent`, `completedSteps`, `totalSteps`, `progressStyle`, `visualStyle`, `accentHex`, and `glassOpacity`. The file is sent as complete content, without merging the previous activity's fields.
+The supported file fields use camelCase: `title`, `summary`, `status`, `sourceName`, `sourceIcon`, `template`, `builderSpec`, `jsonRender`, `data`, `action`, `deepLink`, `inlineLabel`, `primaryLabel`, `primaryValue`, `primaryDelta`, `secondaryLabel`, `secondaryValue`, `footer`, `chartValues`, `chartTitle`, `chartStyle`, `progressPercent`, `completedSteps`, `totalSteps`, `progressStyle`, `visualStyle`, `accentHex`, and `glassOpacity`. The file is sent as complete content, without merging the previous activity's fields.
+
+## Full-screen reports and Lock Screen layouts
+
+Publish a build report to Recent Alerts, or add a compact Live Activity that opens the same report when tapped.
+
+```bash
+agentalerts send --file examples/json-render-standalone.json
+agentalerts send --file examples/json-render-build-health.json --activity-id build-health
+agentalerts send --file examples/json-render-standalone.json --surface in_app --surface notification
+```
+
+A content file uses `jsonRender` with `version: 1` and an `app` or `lockScreen` spec. Each uses json-render's `root`, `elements`, and optional `state`. The CLI selects `in_app` for `app` and `live_activity` for `lockScreen`. To request a notification, list it along with the other surfaces using `--surface`.
+
+The Lock Screen spec can use stacks, text, metrics, badges, and progress within 2 KiB. The full-screen spec adds charts and other report components within 48 KiB. Both support read-only layouts and `$state` bindings. An in-app report receipt includes `report_id` and `report_expires_at` in JSON output. Reports remain available in Recent Alerts for 24 hours.
 
 ## Credentials
 

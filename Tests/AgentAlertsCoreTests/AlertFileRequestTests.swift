@@ -95,6 +95,56 @@ import Testing
         }
     }
 
+    @Test func standaloneReportSendsNoActivityOrNotificationByDefault() throws {
+        let data = Data(#"""
+        {
+            "title":"Build health",
+            "jsonRender":{"version":1,"app":{"root":"report","elements":{"report":{"type":"Text","props":{"text":"Checks running"}}}}}
+        }
+        """#.utf8)
+        let report = try AlertFileRequest(data: data, activityID: "build")
+        let request = try object(report.body)
+        #expect(request["surfaces"] as? [String] == ["in_app"])
+        #expect(request["activity_id"] == nil && request["update_mode"] == nil && request["attributes"] == nil)
+        #expect(request["notification"] == nil)
+        #expect((request["json_render"] as? [String: Any])?["app"] is [String: Any])
+        #expect((request["payload"] as? [String: Any])?["jsonRender"] == nil)
+
+        let withNotification = try AlertFileRequest(data: data, activityID: "build", surfaces: [.inApp, .notification])
+        let notificationRequest = try object(withNotification.body)
+        #expect(notificationRequest["surfaces"] as? [String] == ["in_app", "notification"])
+        #expect((notificationRequest["notification"] as? [String: Any])?["title"] as? String == "Build health")
+        #expect(throws: AppError.self) {
+            try AlertFileRequest(data: data, activityID: "build", surfaces: [.liveActivity])
+        }
+    }
+
+    @Test func pairedReportDoesNotCountTheFullSpecInTheActivityPush() throws {
+        let compact: [String: Any] = [
+            "root": "status",
+            "elements": ["status": ["type": "Text", "props": ["text": "Checks running"]]]
+        ]
+        let full: [String: Any] = [
+            "root": "report",
+            "elements": ["report": ["type": "Heading", "props": ["text": "Build report"]]],
+            "state": ["detail": Array(repeating: String(repeating: "x", count: 100), count: 50)]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: [
+            "title": "Build health",
+            "jsonRender": ["version": 1, "app": full, "lockScreen": compact]
+        ])
+        #expect(data.count > 4_096)
+        let paired = try AlertFileRequest(data: data, activityID: "build")
+        let envelope = try object(paired.body)
+        #expect(envelope["surfaces"] as? [String] == ["live_activity", "in_app"])
+        #expect(envelope["activity_id"] as? String == "build")
+        #expect(envelope["update_mode"] as? String == "upsert_single")
+        let wireSpec = try #require(envelope["json_render"] as? [String: Any])
+        #expect(wireSpec["app"] is [String: Any] && wireSpec["lockScreen"] is [String: Any])
+        let payload = try #require(envelope["payload"] as? [String: Any])
+        #expect(payload["jsonRenderLockScreen"] == nil && payload["inAppReportID"] == nil)
+    }
+
     @Test func rejectsNonRegularAndMissingFilesWithoutWaiting() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

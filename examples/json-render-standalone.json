@@ -1,0 +1,36 @@
+{
+  "title": "Release readiness",
+  "summary": "Two checks left",
+  "status": "warning",
+  "sourceName": "Release pipeline",
+  "jsonRender": {
+    "version": 1,
+    "app": {
+      "root": "readiness",
+      "elements": {
+        "readiness": {
+          "type": "List",
+          "props": {
+            "title": "Before release"
+          },
+          "children": [
+            "review",
+            "artifacts"
+          ]
+        },
+        "review": {
+          "type": "ListItem",
+          "props": {
+            "title": "Review UI test failures"
+          }
+        },
+        "artifacts": {
+          "type": "ListItem",
+          "props": {
+            "title": "Upload the build manifest"
+          }
+        }
+      }
+    }
+  }
+}
