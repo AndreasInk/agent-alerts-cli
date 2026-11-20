@@ -72,6 +72,8 @@ public struct AgentAlertsClient: Sendable {
         guard (200..<300).contains(response.statusCode) else {
             let advice: String
             switch response.statusCode {
+            case 400:
+                advice = Self.layoutValidationAdvice(data) ?? " The CLI did not retry."
             case 401:
                 advice = " Run agentalerts setup to reconnect."
             case 403:
@@ -94,4 +96,25 @@ public struct AgentAlertsClient: Sendable {
         }
         return acknowledgement
     }
+    private static func layoutValidationAdvice(_ data: Data) -> String? {
+        guard data.count <= 65_536,
+              let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let code = receipt["code"] as? String else { return nil }
+        if code == "apns_payload_too_large" {
+            return " Shorten the alert or Lock Screen layout to fit the 4096-byte APNs limit."
+        }
+        guard code == "invalid_json_render", let path = receipt["path"] as? String else { return nil }
+        let parts = path.split(separator: ".", omittingEmptySubsequences: false)
+        var field = "jsonRender"
+        if parts.count == 1, ["surfaces", "event", "update_mode"].contains(parts[0]) {
+            field = parts[0] == "update_mode" ? "updateMode" : String(parts[0])
+        } else if parts.count >= 2, parts[0] == "json_render", ["app", "lockScreen"].contains(parts[1]) {
+            field += ".\(parts[1])"
+            if parts.count >= 3, ["elements", "root", "state"].contains(parts[2]) {
+                field += ".\(parts[2])"
+            }
+        }
+        return " Check \(field) for an invalid report layout field."
+    }
+
 }

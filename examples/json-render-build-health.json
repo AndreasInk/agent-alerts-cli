@@ -1,0 +1,148 @@
+{
+  "title": "Build health",
+  "summary": "9 of 12 checks passed",
+  "status": "warning",
+  "sourceName": "CI pipeline",
+  "jsonRender": {
+    "version": 1,
+    "lockScreen": {
+      "root": "summary",
+      "elements": {
+        "summary": {
+          "type": "Stack",
+          "props": {
+            "direction": "vertical"
+          },
+          "children": [
+            "header",
+            "progress"
+          ]
+        },
+        "header": {
+          "type": "Stack",
+          "props": {
+            "direction": "horizontal"
+          },
+          "children": [
+            "title",
+            "status"
+          ]
+        },
+        "title": {
+          "type": "Text",
+          "props": {
+            "text": "Build health",
+            "variant": "lead"
+          }
+        },
+        "status": {
+          "type": "Badge",
+          "props": {
+            "text": "3 failing",
+            "variant": "warning"
+          }
+        },
+        "progress": {
+          "type": "Progress",
+          "props": {
+            "label": "Checks passed",
+            "value": {
+              "$state": "/passed"
+            },
+            "max": 12
+          }
+        }
+      },
+      "state": {
+        "passed": 9
+      }
+    },
+    "app": {
+      "root": "report",
+      "elements": {
+        "report": {
+          "type": "Stack",
+          "props": {
+            "direction": "vertical",
+            "gap": 16
+          },
+          "children": [
+            "progress",
+            "checks",
+            "durations"
+          ]
+        },
+        "progress": {
+          "type": "Progress",
+          "props": {
+            "label": "Checks passed",
+            "value": {
+              "$state": "/passed"
+            },
+            "max": 12
+          }
+        },
+        "durations": {
+          "type": "BarChart",
+          "props": {
+            "title": "Build duration",
+            "data": {
+              "$state": "/builds"
+            },
+            "xKey": "run",
+            "yKey": "minutes"
+          }
+        },
+        "checks": {
+          "type": "List",
+          "props": {
+            "title": "Failing checks"
+          },
+          "children": [
+            "lint",
+            "tests",
+            "artifacts"
+          ]
+        },
+        "lint": {
+          "type": "ListItem",
+          "props": {
+            "title": "Lint",
+            "subtitle": "Unused import in BuildSettings.swift"
+          }
+        },
+        "tests": {
+          "type": "ListItem",
+          "props": {
+            "title": "UI tests",
+            "subtitle": "Settings navigation test timed out"
+          }
+        },
+        "artifacts": {
+          "type": "ListItem",
+          "props": {
+            "title": "Artifact upload",
+            "subtitle": "Build manifest was missing"
+          }
+        }
+      },
+      "state": {
+        "passed": 9,
+        "builds": [
+          {
+            "run": "40",
+            "minutes": 6.2
+          },
+          {
+            "run": "41",
+            "minutes": 5.9
+          },
+          {
+            "run": "42",
+            "minutes": 7.4
+          }
+        ]
+      }
+    }
+  }
+}
